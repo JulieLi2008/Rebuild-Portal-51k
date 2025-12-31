@@ -1,4 +1,3 @@
-
 export enum OrderStatus {
   Pending = 'Pending',
   AssignedToDesigner = 'Assigned to Designer',
@@ -8,7 +7,7 @@ export enum OrderStatus {
   InstallFinished = 'Install Finished'
 }
 
-export type UserRole = 'SuperAdmin' | 'Manager' | 'Sales' | 'FactoryWorker' | 'Supplier';
+export type UserRole = string;
 
 export interface UserProfile {
   id: string;
@@ -58,6 +57,8 @@ export interface StoreInfo {
   email: string;
   phone: string;
   managerId?: string;
+  managerName?: string;
+  storeType?: string;
   isActive: boolean;
   commissionRate: number;
 }
