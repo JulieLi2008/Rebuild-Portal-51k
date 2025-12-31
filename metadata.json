@@ -1,0 +1,8 @@
+{
+  "name": "51wood Smart MRP Portal",
+  "description": "An AI-powered manufacturing and order management portal for 51wood, featuring smart quoting, real-time factory tracking, and Gemini-driven order analysis.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
