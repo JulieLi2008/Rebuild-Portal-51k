@@ -1,10 +1,7 @@
 export enum OrderStatus {
-  Pending = 'Pending',
-  AssignedToDesigner = 'Assigned to Designer',
-  InProduction = 'In Production',
-  ContractMakerPool = 'Contract Maker Pool',
-  Completed = 'Completed',
-  InstallFinished = 'Install Finished'
+  Draft = 'Draft',
+  Production = 'Production',
+  Completed = 'Completed'
 }
 
 export type UserRole = string;
@@ -14,33 +11,26 @@ export interface UserProfile {
   name: string;
   email: string;
   role: UserRole;
-  storeId?: string; // Links Sales/Managers to a specific store
+  storeId?: string;
   approved: boolean;
-  avatar?: string;
   joinDate: string;
 }
 
-export interface Order {
-  id: string;
-  orderNumber: string;
-  date: string;
-  clientName: string;
-  address: string;
-  phone: string;
-  total: number;
-  cabinetType: string;
-  status: OrderStatus;
-  storeId: string;
-  salesId: string;
+export interface Dimensions {
+  w: string;
+  h: string;
+  d: string;
 }
 
 export interface Product {
   id: string;
+  sku: string;
   name: string;
-  category: string;
-  price: number;
+  base_price: number;
   unit: string;
-  image: string;
+  dimensions: Dimensions;
+  modifications: string[];
+  category: string;
   stockLevel: number;
   minStock: number;
 }
@@ -50,23 +40,40 @@ export interface QuoteLineItem {
   quantity: number;
 }
 
-export interface StoreInfo {
-  id: string;
+export interface ClientInfo {
   name: string;
   address: string;
-  email: string;
   phone: string;
-  managerId?: string;
-  managerName?: string;
-  storeType?: string;
-  isActive: boolean;
-  commissionRate: number;
+  email: string;
 }
 
-export interface FactoryTask {
+export interface Order {
   id: string;
-  orderId: string;
-  productName: string;
-  quantity: number;
-  status: 'Queue' | 'Cutting' | 'Assembly' | 'Ready';
+  order_no: string;
+  store_id: string;
+  manager_name: string;
+  client_info: ClientInfo;
+  line_items: QuoteLineItem[];
+  status: OrderStatus;
+  date: string;
+}
+
+export interface TaskItem {
+  id: string;
+  task_name: string;
+  is_complete: boolean;
+  signed_by: string;
+}
+
+export interface ProductionTasks {
+  order_id: string;
+  tasks: TaskItem[];
+}
+
+export interface StoreInfo {
+  id: string;
+  store_name: string;
+  manager_name: string;
+  address: string;
+  commissionRate: number;
 }
