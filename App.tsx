@@ -35,7 +35,8 @@ import {
   ChevronDown,
   Lock,
   FileUp,
-  UploadCloud
+  UploadCloud,
+  Search
 } from 'lucide-react';
 import { 
   Order, 
@@ -64,13 +65,18 @@ const App: React.FC = () => {
   const [dbRoles, setDbRoles] = useState<any[]>(mockDatabase.roles);
 
   // --- Auth & Navigation ---
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  // Overriding default null state to Leo CEO for full access as requested
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(INITIAL_USERS[0] as UserProfile);
   const [activeView, setActiveView] = useState('Dashboard');
   const [users] = useState<UserProfile[]>(INITIAL_USERS as UserProfile[]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
   const [dashFilterPeriod, setDashFilterPeriod] = useState('All Time');
+
+  // --- Inventory Search & Filters ---
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryCategory, setInventoryCategory] = useState('All');
 
   // --- Quote Workflow State ---
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
@@ -437,6 +443,16 @@ const App: React.FC = () => {
     
     return { revenue, count, inventoryVal, ordersPerStore };
   }, [filteredOrders, dbStores, dbOrders, dbProducts]);
+
+  // Filtering inventory list
+  const filteredInventory = useMemo(() => {
+    return dbProducts.filter(p => {
+      const matchesSearch = p.name.toLowerCase().includes(inventorySearch.toLowerCase()) || 
+                           p.sku.toLowerCase().includes(inventorySearch.toLowerCase());
+      const matchesCategory = inventoryCategory === 'All' || p.category === inventoryCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [dbProducts, inventorySearch, inventoryCategory]);
 
   const currentOrder = useMemo(() => dbOrders.find(o => o.id === selectedOrderForTasks), [dbOrders, selectedOrderForTasks]);
   const currentTasks = useMemo(() => dbProductionTasks.find(pt => pt.order_id === selectedOrderForTasks)?.tasks || [], [dbProductionTasks, selectedOrderForTasks]);
@@ -1018,20 +1034,53 @@ const App: React.FC = () => {
           )}
 
           {activeView === 'Inventory' && (
-            <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden animate-in fade-in duration-500">
-               <table className="w-full text-left">
-                  <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product Ref</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Category</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Available Units</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Value / Unit</th></tr></thead>
-                  <tbody className="divide-y">
-                     {dbProducts.map(p => (
-                       <tr key={p.id} className="hover:bg-slate-50/50">
-                          <td className="px-8 py-6 font-black text-sm">{p.name} <span className="block text-[9px] text-slate-400 tracking-widest">{p.sku}</span></td>
-                          <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase">{p.category}</td>
-                          <td className="px-8 py-6 text-center"><span className={`px-3 py-1 rounded-lg text-xs font-black ${p.stockLevel < p.minStock ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-900'}`}>{p.stockLevel}</span></td>
-                          <td className="px-8 py-6 text-right font-black text-blue-600">${p.base_price.toFixed(2)}</td>
-                       </tr>
-                     ))}
-                  </tbody>
-               </table>
+            <div className="space-y-6 animate-in fade-in duration-500">
+               {/* Inventory Toolbar */}
+               <div className="flex flex-wrap gap-4 items-center bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
+                  <div className="flex-1 min-w-[300px] relative">
+                    <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Search product or SKU..." 
+                      value={inventorySearch}
+                      onChange={(e) => setInventorySearch(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+                    />
+                  </div>
+                  <div className="w-64">
+                    <select 
+                      value={inventoryCategory}
+                      onChange={(e) => setInventoryCategory(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer"
+                    >
+                      <option value="All">All Categories</option>
+                      <option value="Cabinet Style">Cabinet Style</option>
+                      <option value="Hardware">Hardware</option>
+                      <option value="Material">Material</option>
+                    </select>
+                  </div>
+               </div>
+
+               <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
+                  <table className="w-full text-left">
+                     <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product Ref</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Category</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Available Units</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Value / Unit</th></tr></thead>
+                     <tbody className="divide-y">
+                        {filteredInventory.map(p => (
+                          <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                             <td className="px-8 py-6 font-black text-sm">{p.name} <span className="block text-[9px] text-slate-400 tracking-widest">{p.sku}</span></td>
+                             <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase">{p.category}</td>
+                             <td className="px-8 py-6 text-center"><span className={`px-3 py-1 rounded-lg text-xs font-black ${p.stockLevel < p.minStock ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-900'}`}>{p.stockLevel}</span></td>
+                             <td className="px-8 py-6 text-right font-black text-blue-600">${p.base_price.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                        {filteredInventory.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No matching products found</td>
+                          </tr>
+                        )}
+                     </tbody>
+                  </table>
+               </div>
             </div>
           )}
 
