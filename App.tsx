@@ -7,7 +7,7 @@ import {
   Trash2,
   Sparkles,
   DollarSign,
-  Plus,
+  Plus, 
   Edit3,
   Check,
   ListTodo,
@@ -65,7 +65,6 @@ import {
  * ERROR BOUNDARY COMPONENT
  * Catches JavaScript errors anywhere in their child component tree.
  */
-// Fix: Added explicit interfaces for ErrorBoundary props and state
 interface ErrorBoundaryProps {
   children?: ReactNode;
 }
@@ -75,11 +74,10 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-// Fix: Explicitly using generic parameters for Component to resolve state/props access issues
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+// Fix: Explicitly use React.Component and declare state property to resolve TypeScript errors where state/props were not recognized on ErrorBoundary
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    // Fix: Explicit state initialization with defined type
     this.state = { hasError: false, error: null };
   }
 
@@ -92,7 +90,6 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   render() {
-    // Fix: Accessing this.state is now correctly typed
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-12">
@@ -119,14 +116,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
-    // Fix: Accessing this.props.children is now correctly typed
     return this.props.children;
   }
 }
 
 /**
  * LOGIN SCREEN COMPONENT
- * Centered professional login card for authentication.
  */
 const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLogin }) => {
   const safeUsers = Array.isArray(INITIAL_USERS) ? INITIAL_USERS : [];
@@ -199,32 +194,23 @@ const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLog
 };
 
 const MainApp: React.FC = () => {
-  // --- Central Data Store - CRITICAL: Initialize with defaults or empty arrays ---
+  // Fix: Added missing setDbStores setter to properly manage shop list state
   const [dbStores, setDbStores] = useState<StoreInfo[]>(mockDatabase?.stores || []);
   const [dbProducts, setDbProducts] = useState<Product[]>(mockDatabase?.products || []);
   const [dbOrders, setDbOrders] = useState<Order[]>(mockDatabase?.orders as Order[] || []);
   const [dbProductionTasks, setDbProductionTasks] = useState<ProductionTasks[]>(mockDatabase?.productionTasks || []);
   const [dbRoles, setDbRoles] = useState<any[]>(mockDatabase?.roles || []);
 
-  // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [activeView, setActiveView] = useState('Dashboard');
 
-  // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
-  const [dashFilterPeriod, setDashFilterPeriod] = useState('All Time');
-
-  // --- UI State ---
   const [activeTooltipID, setActiveTooltipID] = useState<string | null>(null);
 
-  // --- Inventory Search & Filters ---
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCategory, setInventoryCategory] = useState('All');
-
-  // --- Task Manager Filter ---
   const [tmFilter, setTmFilter] = useState<string>('All');
 
-  // --- Quote Workflow State ---
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
   const [lineItems, setLineItems] = useState<QuoteLineItem[]>([]);
   const [clientInfo, setClientInfo] = useState({ 
@@ -237,16 +223,9 @@ const MainApp: React.FC = () => {
     address: '' 
   });
 
-  // --- Quote Builder Step 2 New States ---
   const [globalDimensions, setGlobalDimensions] = useState({
-    upperH: '30',
-    lowerH: '35 1/4',
-    upperD: '11 3/4',
-    lowerD: '24',
-    pantryH: '84',
-    pantryD: '24',
-    islandH: '35 1/4',
-    islandD: '24'
+    upperH: '30', lowerH: '35 1/4', upperD: '11 3/4', lowerD: '24',
+    pantryH: '84', pantryD: '24', islandH: '35 1/4', islandD: '24'
   });
   const [expandedCategory, setExpandedCategory] = useState<string | null>("Select Cabinets");
 
@@ -256,21 +235,16 @@ const MainApp: React.FC = () => {
     "Select Service", "Other Products"
   ];
 
-  // --- Selection & Drill-down ---
   const [dcActiveTab, setDcActiveTab] = useState<'Orders' | 'Products' | 'Stores' | 'Tasks'>('Orders');
-
-  // --- Modal States ---
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [showStoreModal, setShowStoreModal] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
   
-  // Forms States
   const [newRoleName, setNewRoleName] = useState('');
   const [newStoreData, setNewStoreData] = useState({ name: '', manager: '', address: '', commission: '10' });
   const [newProductData, setNewProductData] = useState({ name: '', sku: '', category: 'Hardware', price: '0', stock: '10', supplier: 'Standard' });
 
-  // --- CSV Import State ---
   const [showImportModal, setShowImportModal] = useState(false);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<string[][]>([]);
@@ -279,7 +253,6 @@ const MainApp: React.FC = () => {
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Get current user's role permissions
   const currentUserRolePermissions = useMemo(() => {
     if (!currentUser) return null;
     return dbRoles.find(r => r.name === currentUser.role)?.permissions || {};
@@ -295,7 +268,6 @@ const MainApp: React.FC = () => {
     setActiveView('Dashboard');
   };
 
-  // --- EXECUTIVE > ACCESS CONTROL Logic ---
   const togglePermission = (roleId: string, permissionName: string) => {
     setDbRoles(prev => prev.map(role => {
       if (role.id !== roleId) return role;
@@ -333,7 +305,6 @@ const MainApp: React.FC = () => {
     }
   };
 
-  // --- EXECUTIVE > STORES Logic ---
   const handleAddStore = () => {
     if (!newStoreData.name || !newStoreData.manager) return alert("Fill required fields.");
     const newStore: StoreInfo = {
@@ -343,12 +314,12 @@ const MainApp: React.FC = () => {
       address: newStoreData.address || 'TBD',
       commissionRate: parseInt(newStoreData.commission) || 10
     };
-    setDbStores([...dbStores, newStore]);
+    // Fix: Use the state setter instead of direct mutation to ensure UI updates and prevent stale closures
+    setDbStores(prev => [...prev, newStore]);
     setNewStoreData({ name: '', manager: '', address: '', commission: '10' });
     setShowStoreModal(false);
   };
 
-  // --- PRODUCTION > CATALOG Logic ---
   const handleAddProduct = () => {
     if (!newProductData.name || !newProductData.sku) return alert("Fill SKU and Name.");
     const newProd: Product = {
@@ -450,7 +421,6 @@ const MainApp: React.FC = () => {
     setActiveView('TaskManager');
   };
 
-  // --- Derived Data Calculations (Safe) ---
   const dashboardStats = useMemo(() => {
     const storeToFilter = currentUser?.storeId || dashFilterStore;
     const orders = (dbOrders || []).filter(o => storeToFilter === 'All' || o.store_id === storeToFilter);
@@ -487,17 +457,16 @@ const MainApp: React.FC = () => {
   const dashboardTitle = userStoreName ? `Store Performance: ${userStoreName}` : "Global Overview";
 
   const statsList = useMemo(() => [
-    { id: 'rev', label: 'Total Revenue', val: `$${dashboardStats.revenue.toLocaleString()}`, trend: '↑ 14%', icon: DollarSign, exp: "Sum of delivered and in-process orders." },
-    { id: 'prf', label: 'Net Profit', val: `$${(dashboardStats.revenue * 0.28).toLocaleString()}`, trend: '↑ 5%', icon: TrendingUp, exp: "Estimated 28% net margin after COGS/Labor." },
-    { id: 'ord', label: 'Active Orders', val: dashboardStats.count, trend: '↑ 8%', icon: ClipboardList, exp: "Count of live production orders." },
-    { id: 'inv', label: 'Inventory Value', val: `$${(dashboardStats.inventoryVal / 1000).toFixed(1)}k`, trend: '↓ 5%', icon: Warehouse, exp: "Current stock at manufacturing cost." }
+    { id: 'rev', label: 'Total Revenue', val: `$${dashboardStats.revenue.toLocaleString()}`, trend: '↑ 14%', icon: DollarSign, exp: "Calculation: Sum of 'Total Amount' from all 'Delivered' and 'In Process' orders." },
+    { id: 'prf', label: 'Net Profit', val: `$${(dashboardStats.revenue * 0.28).toLocaleString()}`, trend: '↑ 5%', icon: TrendingUp, exp: "Calculation: Total Revenue - (Cost of Goods Sold + Labor Costs)." },
+    { id: 'ord', label: 'Active Orders', val: dashboardStats.count, trend: '↑ 8%', icon: ClipboardList, exp: "Count of all active orders excluding 'Drafts'." },
+    { id: 'inv', label: 'Inventory Value', val: `$${(dashboardStats.inventoryVal / 1000).toFixed(1)}k`, trend: '↓ 5%', icon: Warehouse, exp: "Calculation: Sum of current stock levels multiplied by base manufacturing costs." }
   ], [dashboardStats]);
 
   if (!currentUser) return <LoginScreen onLogin={handleLogin} />;
 
   return (
     <div className="flex h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden">
-      {/* SIDEBAR */}
       <aside className="w-72 bg-white border-r border-slate-200 p-6 flex flex-col z-50 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-100 shrink-0"><Layers size={22} /></div>
@@ -552,7 +521,6 @@ const MainApp: React.FC = () => {
         </div>
       </aside>
 
-      {/* MAIN */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-10 flex items-center justify-between shrink-0 z-40">
           <h2 className="text-xl font-black tracking-tight capitalize">{activeView.replace(/([A-Z])/g, ' $1').trim()}</h2>
@@ -579,21 +547,37 @@ const MainApp: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 {statsList.map((s) => (
-                  <div key={s.id} className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm group hover:border-blue-300 transition-all relative overflow-hidden">
-                    <div className="flex justify-between items-start mb-1 relative z-20">
+                  <div key={s.id} className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm group hover:border-blue-300 transition-all relative">
+                    <div className="flex justify-between items-start mb-1 relative z-30">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
                       <div className="relative">
-                        <button onClick={(e) => { e.stopPropagation(); setActiveTooltipID(activeTooltipID === s.id ? null : s.id); }} className={`p-1.5 rounded-full transition-all ${activeTooltipID === s.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-600'}`}><Info size={14} /></button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setActiveTooltipID(activeTooltipID === s.id ? null : s.id); }} 
+                          className={`p-1.5 rounded-full transition-all ${activeTooltipID === s.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-100 hover:text-slate-600'}`}
+                        >
+                          <Info size={14} />
+                        </button>
+                        
                         {activeTooltipID === s.id && (
-                          <div className="absolute top-10 right-0 w-56 bg-white border border-slate-200 p-4 rounded-2xl shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 duration-200">
-                            <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest block mb-1">Definition</span>
-                            <p className="text-[11px] font-medium text-slate-500 leading-relaxed italic">{s.exp}</p>
+                          <div className="absolute top-12 -right-4 w-64 bg-white border border-slate-200 p-5 rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-200 cursor-default">
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest">Logic Breakdown</span>
+                              <button onClick={() => setActiveTooltipID(null)} className="text-slate-300 hover:text-slate-500 transition-colors"><X size={12}/></button>
+                            </div>
+                            <p className="text-[12px] font-medium text-slate-600 leading-relaxed italic">
+                              {s.exp}
+                            </p>
                           </div>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-baseline gap-2 relative z-10"><p className="text-3xl font-black tracking-tighter">{s.val}</p><span className={`text-[10px] font-bold ${s.trend.startsWith('↑') ? 'text-emerald-500' : 'text-red-400'}`}>{s.trend}</span></div>
-                    <s.icon className="absolute -bottom-4 -right-4 text-slate-50 w-24 h-24" />
+                    <div className="flex items-baseline gap-2 relative z-10">
+                      <p className="text-3xl font-black tracking-tighter">{s.val}</p>
+                      <span className={`text-[10px] font-bold ${s.trend.startsWith('↑') ? 'text-emerald-500' : 'text-red-400'}`}>{s.trend}</span>
+                    </div>
+                    <div className="absolute inset-0 rounded-[32px] overflow-hidden pointer-events-none">
+                       <s.icon className="absolute -bottom-4 -right-4 text-slate-50/80 w-24 h-24" />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -624,7 +608,7 @@ const MainApp: React.FC = () => {
               </div>
             </div>
           )}
-          {/* Other views handled similarly by checking 'activeView' */}
+          
           {activeView === 'TaskManager' && (
             <div className="max-w-6xl mx-auto space-y-10 animate-in fade-in duration-500">
                <div className="flex flex-wrap items-center justify-between gap-6">
