@@ -38,7 +38,9 @@ import {
   UploadCloud,
   Search,
   Play,
-  Clock
+  Clock,
+  LogIn,
+  Key
 } from 'lucide-react';
 import { 
   Order, 
@@ -58,6 +60,80 @@ import {
   mockDatabase
 } from './script.js';
 
+/**
+ * LOGIN SCREEN COMPONENT
+ * Centered professional login card for authentication.
+ */
+const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLogin }) => {
+  return (
+    <div className="min-h-screen bg-[#f1f5f9] flex items-center justify-center p-6 font-sans">
+      <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl shadow-slate-200/50 overflow-hidden animate-in fade-in zoom-in-95 duration-500">
+        <div className="p-12">
+          {/* Brand Logo */}
+          <div className="flex flex-col items-center gap-4 mb-12">
+            <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-200">
+              <Layers size={32} />
+            </div>
+            <h1 className="text-2xl font-black tracking-tighter">51K PORTAL</h1>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Enterprise Resource Control</p>
+          </div>
+
+          {/* Form */}
+          <div className="space-y-5">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Address</label>
+              <input 
+                type="email" 
+                defaultValue="admin@51wood.ca"
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+                placeholder="name@51wood.ca"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Security Key</label>
+              <input 
+                type="password" 
+                defaultValue="password123"
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+                placeholder="••••••••"
+              />
+            </div>
+            <button 
+              onClick={() => onLogin(INITIAL_USERS[0] as UserProfile)}
+              className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+            >
+              Authorize System Entry <LogIn size={16} />
+            </button>
+          </div>
+
+          {/* Prototyping Quick Access */}
+          <div className="mt-12 pt-8 border-t border-slate-100">
+            <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] text-center mb-6">Prototyping Sandbox Access</p>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'CEO', icon: ShieldCheck, user: INITIAL_USERS[0], color: 'text-blue-600 bg-blue-50' },
+                { label: 'Manager', icon: Building2, user: { ...INITIAL_USERS[1], storeId: 'S1' }, color: 'text-amber-600 bg-amber-50' },
+                { label: 'Worker', icon: Hammer, user: { ...INITIAL_USERS[2], role: 'Worker' }, color: 'text-slate-600 bg-slate-50' }
+              ].map((role) => (
+                <button 
+                  key={role.label}
+                  onClick={() => onLogin(role.user as UserProfile)}
+                  className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-transparent hover:border-slate-200 hover:bg-white transition-all group"
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${role.color} transition-all group-hover:scale-110`}>
+                    <role.icon size={18} />
+                  </div>
+                  <span className="text-[9px] font-black uppercase text-slate-400">{role.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   // --- Central Data Store ---
   const [dbStores, setDbStores] = useState<StoreInfo[]>(mockDatabase.stores);
@@ -67,7 +143,7 @@ const App: React.FC = () => {
   const [dbRoles, setDbRoles] = useState<any[]>(mockDatabase.roles);
 
   // --- Auth & Navigation ---
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(INITIAL_USERS[0] as UserProfile);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [activeView, setActiveView] = useState('Dashboard');
   const [users] = useState<UserProfile[]>(INITIAL_USERS as UserProfile[]);
 
@@ -159,6 +235,15 @@ const App: React.FC = () => {
 
   const handleLogin = (user: UserProfile) => {
     setCurrentUser(user);
+    if (user.role === 'Worker') {
+      setActiveView('TaskManager');
+    } else {
+      setActiveView('Dashboard');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
     setActiveView('Dashboard');
   };
 
@@ -433,14 +518,17 @@ const App: React.FC = () => {
     } : pt));
   };
 
-  // --- Derived Data & Dash Filtering ---
-  const filteredOrders = useMemo(() => {
-    return dbOrders.filter(o => dashFilterStore === 'All' || o.store_id === dashFilterStore);
-  }, [dbOrders, dashFilterStore]);
-
+  // --- Scoped Data Calculation ---
   const dashboardStats = useMemo(() => {
-    const revenue = filteredOrders.reduce((sum, o) => sum + o.line_items.reduce((a, b) => a + (b.product.base_price * b.quantity), 0), 0);
-    const count = filteredOrders.length;
+    // If manager, force filter to their store
+    const storeToFilter = currentUser?.storeId || dashFilterStore;
+    
+    const ordersForStats = dbOrders.filter(o => 
+      (storeToFilter === 'All' || o.store_id === storeToFilter)
+    );
+
+    const revenue = ordersForStats.reduce((sum, o) => sum + o.line_items.reduce((a, b) => a + (b.product.base_price * b.quantity), 0), 0);
+    const count = ordersForStats.length;
     const inventoryVal = dbProducts.reduce((sum, p) => sum + (p.base_price * p.stockLevel), 0);
     
     const ordersPerStore = dbStores.map(s => ({
@@ -448,8 +536,8 @@ const App: React.FC = () => {
       count: dbOrders.filter(o => o.store_id === s.id).length
     }));
     
-    return { revenue, count, inventoryVal, ordersPerStore };
-  }, [filteredOrders, dbStores, dbOrders, dbProducts]);
+    return { revenue, count, inventoryVal, ordersPerStore, ordersForStats };
+  }, [dbOrders, dbStores, dbProducts, currentUser, dashFilterStore]);
 
   const filteredInventory = useMemo(() => {
     return dbProducts.filter(p => {
@@ -461,12 +549,16 @@ const App: React.FC = () => {
   }, [dbProducts, inventorySearch, inventoryCategory]);
 
   const filteredTasks = useMemo(() => {
-    return dbOrders.filter(o => tmFilter === 'All' || o.status === tmFilter);
-  }, [dbOrders, tmFilter]);
+    // Filter tasks based on store scope if manager
+    return dbOrders.filter(o => {
+      const matchesStatus = tmFilter === 'All' || o.status === tmFilter;
+      const matchesStore = !currentUser?.storeId || o.store_id === currentUser.storeId;
+      return matchesStatus && matchesStore;
+    });
+  }, [dbOrders, tmFilter, currentUser]);
 
   // View Handlers
   const openOrderDrilldown = (id: string) => {
-    // Note: TaskManager now shows all cards
     setActiveView('TaskManager');
   };
 
@@ -493,6 +585,20 @@ const App: React.FC = () => {
     return isSuperUser || hasExplicitPermission;
   }, [currentUser, currentUserRolePermissions]);
 
+  // Sidebar Group Visibility
+  const showExecutive = currentUser?.role === 'SuperAdmin';
+  const showSales = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager';
+  const showDashboard = currentUser?.role !== 'Worker';
+
+  // Dashboard Title
+  const userStoreName = dbStores.find(s => s.id === currentUser?.storeId)?.store_name;
+  const dashboardTitle = userStoreName ? `Store Performance: ${userStoreName}` : "Global Overview";
+
+  // Conditional Authentication Check
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden">
       {/* SIDEBAR */}
@@ -502,25 +608,56 @@ const App: React.FC = () => {
           <h1 className="font-black text-lg tracking-tighter">51K PORTAL</h1>
         </div>
         <nav className="flex-1 space-y-6 overflow-y-auto scrollbar-hide">
-          {[
-            { label: 'EXECUTIVE', items: [{id:'Dashboard',label:'Dashboard',icon:BarChart3},{id:'Users',label:'Access Control',icon:ShieldCheck},{id:'Stores',label:'Store Network',icon:Building2},{id:'DataCenter',label:'Data Center',icon:Database}] },
-            { label: 'SALES', items: [{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Orders',label:'Orders',icon:ClipboardList}] },
-            { label: 'PRODUCTION', items: [{id:'TaskManager',label:'Task Manager',icon:ListTodo},{id:'Inventory',label:'Inventory',icon:Warehouse},{id:'Catalog',label:'Master Catalog',icon:Package}] }
-          ].map(group => (
-            <div key={group.label}>
-              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">{group.label}</p>
+          {showDashboard && (
+            <div>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">OVERVIEW</p>
               <div className="space-y-1">
-                {group.items.map(item => (
+                <button onClick={() => setActiveView('Dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === 'Dashboard' ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                  <BarChart3 size={18} /><span className="font-bold text-xs">Dashboard</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {showExecutive && (
+            <div>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">EXECUTIVE</p>
+              <div className="space-y-1">
+                {[{id:'Users',label:'Access Control',icon:ShieldCheck},{id:'Stores',label:'Store Network',icon:Building2},{id:'DataCenter',label:'Data Center',icon:Database}].map(item => (
                   <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
                 ))}
               </div>
             </div>
-          ))}
+          )}
+
+          {showSales && (
+            <div>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">SALES</p>
+              <div className="space-y-1">
+                {[{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
+                  <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                    <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">PRODUCTION</p>
+            <div className="space-y-1">
+              {[{id:'TaskManager',label:'Task Manager',icon:ListTodo},{id:'Inventory',label:'Inventory',icon:Warehouse},{id:'Catalog',label:'Master Catalog',icon:Package}].map(item => (
+                <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                  <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </nav>
         <div className="pt-6 border-t border-slate-200">
-          <button onClick={() => setCurrentUser(null)} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 transition-all font-black text-xs uppercase"><LogOut size={18} /> Logout</button>
+          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 transition-all font-black text-xs uppercase"><LogOut size={18} /> Logout</button>
         </div>
       </aside>
 
@@ -529,7 +666,12 @@ const App: React.FC = () => {
         <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-10 flex items-center justify-between shrink-0 z-40">
           <h2 className="text-xl font-black tracking-tight capitalize">{activeView.replace(/([A-Z])/g, ' $1').trim()}</h2>
           <div className="flex items-center gap-4">
-            <div className="text-right"><p className="text-sm font-black">{currentUser?.name}</p><span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[8px] font-black uppercase">{currentUser?.role}</span></div>
+            <div className="text-right">
+              <p className="text-sm font-black">{currentUser?.name}</p>
+              <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[8px] font-black uppercase">
+                {userStoreName ? `${currentUser?.role} - ${userStoreName}` : currentUser?.role}
+              </span>
+            </div>
             <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 font-black text-sm">{currentUser?.name?.[0]}</div>
           </div>
         </header>
@@ -537,14 +679,16 @@ const App: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-10">
           {activeView === 'Dashboard' && (
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-700">
-              <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-3xl border border-slate-200">
-                <div className="flex items-center gap-2 px-3 border-r pr-6"><Filter size={16} className="text-slate-400"/><span className="text-[10px] font-black text-slate-400 uppercase">Filters</span></div>
-                <select value={dashFilterStore} onChange={e => setDashFilterStore(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-xs font-bold outline-none">
-                  <option value="All">All Stores</option>{dbStores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
-                </select>
-                <select value={dashFilterPeriod} onChange={e => setDashFilterPeriod(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-xs font-bold outline-none">
-                  <option>All Time</option><option>Last 30 Days</option><option>This Quarter</option>
-                </select>
+              <div className="flex items-center justify-between">
+                <h3 className="text-2xl font-black tracking-tight">{dashboardTitle}</h3>
+                {!currentUser?.storeId && (
+                  <div className="flex gap-4 items-center bg-white p-3 rounded-2xl border border-slate-200 shadow-sm">
+                    <Filter size={16} className="text-slate-400 ml-2" />
+                    <select value={dashFilterStore} onChange={e => setDashFilterStore(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-xs font-bold outline-none">
+                      <option value="All">All Hubs</option>{dbStores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -564,9 +708,9 @@ const App: React.FC = () => {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-8">
-                   <h4 className="text-sm font-black uppercase tracking-widest">Orders per Store Hub</h4>
+                   <h4 className="text-sm font-black uppercase tracking-widest">Performance Insights</h4>
                    <div className="space-y-6">
-                      {dashboardStats.ordersPerStore.map(s => {
+                      {dashboardStats.ordersPerStore.filter(s => !currentUser?.storeId || s.name === userStoreName).map(s => {
                         const max = Math.max(...dashboardStats.ordersPerStore.map(v => v.count)) || 1;
                         return (
                           <div key={s.name} className="space-y-2">
@@ -579,9 +723,9 @@ const App: React.FC = () => {
                 </div>
                 <div className="bg-slate-900 rounded-[40px] p-10 text-white relative overflow-hidden flex flex-col justify-center">
                    <div className="relative z-10">
-                     <h3 className="text-3xl font-black">Executive Drill-Down</h3>
-                     <p className="text-slate-400 mt-4 text-sm max-w-sm">Access deep relational analytics from the 51wood factory floor through the Data Center.</p>
-                     <button onClick={() => setActiveView('DataCenter')} className="mt-8 bg-blue-600 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all">Launch Analysis</button>
+                     <h3 className="text-3xl font-black">Optimization Matrix</h3>
+                     <p className="text-slate-400 mt-4 text-sm max-w-sm">Use Gemini AI to analyze production bottle-necks and material consumption trends for this hub.</p>
+                     <button className="mt-8 bg-blue-600 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center gap-2"><Sparkles size={14}/> Run AI Diagnostics</button>
                    </div>
                    <Activity size={200} className="absolute -bottom-10 -right-10 text-white/5" />
                 </div>
@@ -597,7 +741,14 @@ const App: React.FC = () => {
                       <h3 className="text-sm font-black uppercase tracking-widest mb-10 border-b pb-4">Step 1: Client Enrollment</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Select Hub</label>
-                           <select value={clientInfo.store_id} onChange={e => handleStoreChange(e.target.value)} className="w-full bg-slate-50 border p-3 rounded-xl outline-none text-sm">{dbStores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}</select>
+                           <select 
+                            value={clientInfo.store_id} 
+                            disabled={!!currentUser?.storeId}
+                            onChange={e => handleStoreChange(e.target.value)} 
+                            className="w-full bg-slate-50 border p-3 rounded-xl outline-none text-sm disabled:opacity-50"
+                           >
+                            {dbStores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                           </select>
                          </div>
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Manager Assigned</label><input type="text" value={clientInfo.managerName} className="w-full bg-slate-100 border p-3 rounded-xl text-sm text-slate-400" readOnly /></div>
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">First Name *</label><input type="text" value={clientInfo.firstName} onChange={e => setClientInfo({...clientInfo, firstName: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
@@ -1038,7 +1189,7 @@ const App: React.FC = () => {
                <table className="w-full text-left">
                   <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Order Ref</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer Profile</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Operational Status</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Quote Value</th></tr></thead>
                   <tbody className="divide-y">
-                     {dbOrders.map(o => (
+                     {dbOrders.filter(o => !currentUser?.storeId || o.store_id === currentUser.storeId).map(o => (
                        <tr key={o.id} onClick={() => openOrderDrilldown(o.id)} className="hover:bg-blue-50/40 cursor-pointer transition-all">
                           <td className="px-8 py-6 text-sm font-black">#{o.order_no}<span className="block text-[10px] text-slate-400 font-medium">{o.date}</span></td>
                           <td className="px-8 py-6 text-sm font-bold text-slate-700">{o.client_info.name}</td>
