@@ -28,40 +28,74 @@ export const mockDatabase = {
   ],
 
   // C. Orders (Transactions)
-  orders: Array.from({ length: 18 }).map((_, i) => {
-    const storeIds = ['S1', 'S2', 'S3', 'S4'];
-    const storeId = storeIds[i % 4];
-    const statuses = ['Production', 'Completed', 'Production', 'Draft'];
-    const names = ['John Smith', 'Maria Garcia', 'Robert Brown', 'Linda Davis', 'James Miller', 'Patricia Taylor'];
-    return {
-      id: `O${i + 1}`,
-      order_no: (400 + i).toString(),
-      store_id: storeId,
-      manager_name: storeId === 'S1' ? 'Leo Admin' : storeId === 'S2' ? 'Sarah West' : 'Staff',
-      client_info: {
-        name: names[i % 6],
-        address: `${100 + i} Main St, City`,
-        phone: `555-010${i}`,
-        email: `client${i}@example.com`
-      },
-      line_items: [
-        { product: { id: 'P0', name: 'Upper Cabinet', base_price: 150 }, quantity: 2 + (i % 3) }
-      ],
-      status: statuses[i % 4],
-      date: `2025-05-${10 + (i % 20)}`
-    };
-  }),
+  orders: [
+    {
+      id: 'O1',
+      order_no: '401',
+      store_id: 'S1',
+      manager_name: 'Leo Admin',
+      client_info: { name: 'John Smith', address: '100 Main St', phone: '555-0101', email: 'j.smith@example.com' },
+      line_items: [{ product: { id: 'P1', name: 'Base Cabinet White', base_price: 210 }, quantity: 4 }],
+      status: 'Pending',
+      date: '2025-05-10',
+      due_date: '2025-06-15'
+    },
+    {
+      id: 'O2',
+      order_no: '402',
+      store_id: 'S2',
+      manager_name: 'Sarah West',
+      client_info: { name: 'Maria Garcia', address: '200 Oak Ave', phone: '555-0102', email: 'm.garcia@example.com' },
+      line_items: [{ product: { id: 'P0', name: 'Upper Cabinet White', base_price: 150 }, quantity: 2 }],
+      status: 'In Process',
+      date: '2025-05-12',
+      due_date: '2025-05-20' // Late Delivery Example
+    },
+    {
+      id: 'O3',
+      order_no: '403',
+      store_id: 'S1',
+      manager_name: 'Leo Admin',
+      client_info: { name: 'Robert Brown', address: '300 Pine Dr', phone: '555-0103', email: 'r.brown@example.com' },
+      line_items: [{ product: { id: 'P6', name: 'Pantry Tall Unit', base_price: 450 }, quantity: 1 }],
+      status: 'Quality Check',
+      date: '2025-05-14',
+      due_date: '2025-06-01'
+    }
+  ],
 
   // D. Production Tasks (Workflow Tracking)
-  productionTasks: Array.from({ length: 18 }).map((_, i) => ({
-    order_id: `O${i + 1}`,
-    tasks: [
-      { id: `T${i}-1`, task_name: 'Board Cutting', is_complete: i % 2 === 0, signed_by: i % 2 === 0 ? 'KW' : '', notes: i % 3 === 0 ? 'Standard grain' : '' },
-      { id: `T${i}-2`, task_name: 'Edgebanding', is_complete: i % 4 === 0, signed_by: i % 4 === 0 ? 'KW' : '', notes: '' },
-      { id: `T${i}-3`, task_name: 'Assembly', is_complete: false, signed_by: '', notes: '' },
-      { id: `T${i}-4`, task_name: 'Quality Check', is_complete: false, signed_by: '', notes: '' }
-    ]
-  })),
+  productionTasks: [
+    {
+      order_id: 'O1',
+      tasks: [
+        { id: 'T1-1', task_name: 'Board Cutting', is_complete: false, signed_by: '', notes: '' },
+        { id: 'T1-2', task_name: 'Edgebanding', is_complete: false, signed_by: '', notes: '' },
+        { id: 'T1-3', task_name: 'Assembly', is_complete: false, signed_by: '', notes: '' },
+        { id: 'T1-4', task_name: 'Quality Assurance', is_complete: false, signed_by: '', notes: '' }
+      ]
+    },
+    {
+      order_id: 'O2',
+      started_at: '2025-05-13T09:00:00Z',
+      tasks: [
+        { id: 'T2-1', task_name: 'Board Cutting', is_complete: true, signed_by: 'KW', notes: 'Standard cut' },
+        { id: 'T2-2', task_name: 'Edgebanding', is_complete: false, signed_by: '', notes: '' },
+        { id: 'T2-3', task_name: 'Assembly', is_complete: false, signed_by: '', notes: '' },
+        { id: 'T2-4', task_name: 'Quality Assurance', is_complete: false, signed_by: '', notes: '' }
+      ]
+    },
+    {
+      order_id: 'O3',
+      started_at: '2025-05-13T14:30:00Z',
+      tasks: [
+        { id: 'T3-1', task_name: 'Board Cutting', is_complete: true, signed_by: 'KW', notes: '' },
+        { id: 'T3-2', task_name: 'Edgebanding', is_complete: true, signed_by: 'KW', notes: '' },
+        { id: 'T3-3', task_name: 'Assembly', is_complete: true, signed_by: 'AS', notes: '' },
+        { id: 'T3-4', task_name: 'Quality Assurance', is_complete: false, signed_by: '', notes: '' }
+      ]
+    }
+  ],
 
   // E. Roles (Access Control Extended Matrix)
   roles: [
@@ -72,7 +106,8 @@ export const mockDatabase = {
         'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
         'Drawing': true, 'Upload': true, 'Payment': true, 'Order': true, 'Credit': true,
         'Comment': true, 'Review': true, 'Reviews': true,
-        'Store Orders': true, 'All Orders': true, 'Order Tasks': true 
+        'Store Orders': true, 'All Orders': true, 'Order Tasks': true,
+        'view_data_center': true, 'view_orders': true, 'view_products': true, 'view_stores': true, 'view_tasks': true
       } 
     },
     { 
@@ -82,7 +117,8 @@ export const mockDatabase = {
         'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
         'Drawing': true, 'Upload': true, 'Payment': false, 'Order': true, 'Credit': false,
         'Comment': true, 'Review': true, 'Reviews': false,
-        'Store Orders': true, 'All Orders': false, 'Order Tasks': true 
+        'Store Orders': true, 'All Orders': false, 'Order Tasks': true,
+        'view_data_center': true, 'view_orders': true, 'view_products': true, 'view_stores': true, 'view_tasks': true
       } 
     },
     { 
@@ -92,7 +128,8 @@ export const mockDatabase = {
         'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
         'Drawing': true, 'Upload': false, 'Payment': false, 'Order': true, 'Credit': false,
         'Comment': true, 'Review': false, 'Reviews': false,
-        'Store Orders': true, 'All Orders': false, 'Order Tasks': false 
+        'Store Orders': true, 'All Orders': false, 'Order Tasks': false,
+        'view_data_center': false, 'view_orders': false, 'view_products': false, 'view_stores': false, 'view_tasks': false
       } 
     },
     { 
@@ -102,7 +139,8 @@ export const mockDatabase = {
         'Cell': false, 'Phone': false, 'Address': false, 'Email': true,
         'Drawing': false, 'Upload': false, 'Payment': true, 'Order': true, 'Credit': true,
         'Comment': false, 'Review': false, 'Reviews': false,
-        'Store Orders': false, 'All Orders': true, 'Order Tasks': false 
+        'Store Orders': false, 'All Orders': true, 'Order Tasks': false,
+        'view_data_center': true, 'view_orders': true, 'view_products': false, 'view_stores': false, 'view_tasks': false
       } 
     }
   ]
@@ -122,7 +160,8 @@ export const PERMISSION_COLUMNS = [
   'Cell', 'Phone', 'Address', 'Email', 
   'Drawing', 'Upload', 'Payment', 'Order', 'Credit', 
   'Comment', 'Review', 'Reviews', 
-  'Store Orders', 'All Orders', 'Order Tasks'
+  'Store Orders', 'All Orders', 'Order Tasks',
+  'view_data_center', 'view_orders', 'view_products', 'view_stores', 'view_tasks'
 ];
 
 export const WORKFLOW_STEPS = [

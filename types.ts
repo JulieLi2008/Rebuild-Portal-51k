@@ -1,6 +1,9 @@
 export enum OrderStatus {
   Draft = 'Draft',
-  Production = 'Production',
+  Pending = 'Pending',
+  InProcess = 'In Process',
+  QualityCheck = 'Quality Check',
+  Ready = 'Ready',
   Completed = 'Completed'
 }
 
@@ -56,6 +59,7 @@ export interface Order {
   line_items: QuoteLineItem[];
   status: OrderStatus;
   date: string;
+  due_date?: string; // Added for Task Board
 }
 
 export interface TaskItem {
@@ -63,13 +67,13 @@ export interface TaskItem {
   task_name: string;
   is_complete: boolean;
   signed_by: string;
-  // Added optional notes property to resolve type error in TaskManager
   notes?: string;
 }
 
 export interface ProductionTasks {
   order_id: string;
   tasks: TaskItem[];
+  started_at?: string; // Added for dispatch tracking
 }
 
 export interface StoreInfo {

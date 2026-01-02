@@ -36,7 +36,9 @@ import {
   Lock,
   FileUp,
   UploadCloud,
-  Search
+  Search,
+  Play,
+  Clock
 } from 'lucide-react';
 import { 
   Order, 
@@ -65,7 +67,6 @@ const App: React.FC = () => {
   const [dbRoles, setDbRoles] = useState<any[]>(mockDatabase.roles);
 
   // --- Auth & Navigation ---
-  // Overriding default null state to Leo CEO for full access as requested
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(INITIAL_USERS[0] as UserProfile);
   const [activeView, setActiveView] = useState('Dashboard');
   const [users] = useState<UserProfile[]>(INITIAL_USERS as UserProfile[]);
@@ -77,6 +78,9 @@ const App: React.FC = () => {
   // --- Inventory Search & Filters ---
   const [inventorySearch, setInventorySearch] = useState('');
   const [inventoryCategory, setInventoryCategory] = useState('All');
+
+  // --- Task Manager Filter ---
+  const [tmFilter, setTmFilter] = useState<string>('All');
 
   // --- Quote Workflow State ---
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
@@ -118,9 +122,7 @@ const App: React.FC = () => {
   ];
 
   // --- Selection & Drill-down ---
-  const [selectedOrderForTasks, setSelectedOrderForTasks] = useState<string>(dbOrders[0]?.id || '');
   const [dcActiveTab, setDcActiveTab] = useState<'Orders' | 'Products' | 'Stores' | 'Tasks'>('Orders');
-  const initialsRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // --- Modal States ---
   const [showRoleModal, setShowRoleModal] = useState(false);
@@ -128,7 +130,7 @@ const App: React.FC = () => {
   const [showStoreModal, setShowStoreModal] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
   
-  // Added missing modal form states to resolve compilation errors
+  // Forms States
   const [newRoleName, setNewRoleName] = useState('');
   const [newStoreData, setNewStoreData] = useState({ name: '', manager: '', address: '', commission: '10' });
   const [newProductData, setNewProductData] = useState({ name: '', sku: '', category: 'Hardware', price: '0', stock: '10', supplier: 'Standard' });
@@ -257,14 +259,12 @@ const App: React.FC = () => {
 
       const headers = lines[0].split(',').map(h => h.replace(/^["'](.+(?=["']$))["']$/, '$1').trim());
       const rows = lines.slice(1).map(line => {
-        // Basic split by comma. Note: Doesn't handle escaped commas in quotes perfectly but requested "simple"
         return line.split(',').map(cell => cell.replace(/^["'](.+(?=["']$))["']$/, '$1').trim());
       });
 
       setCsvHeaders(headers);
       setCsvRows(rows);
       
-      // Auto-mapping attempt
       const newMapping = { ...columnMapping };
       headers.forEach(h => {
         const lowerH = h.toLowerCase();
@@ -279,7 +279,6 @@ const App: React.FC = () => {
       setShowImportModal(true);
     };
     reader.readAsText(file);
-    // Reset input so same file can be selected again
     e.target.value = '';
   };
 
@@ -312,7 +311,7 @@ const App: React.FC = () => {
         dimensions: { w: '0', h: '0', d: '0' },
         modifications: [],
         minStock: 5
-      } as any; // Cast as any because of slight schema additions (supplier)
+      } as any;
     });
 
     setDbProducts(prev => [...prev, ...importedProducts]);
@@ -371,21 +370,15 @@ const App: React.FC = () => {
         email: clientInfo.email
       },
       line_items: [...lineItems],
-      status: OrderStatus.Production,
-      date: new Date().toISOString().split('T')[0]
+      status: OrderStatus.Pending,
+      date: new Date().toISOString().split('T')[0],
+      due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0] // Default 2 weeks
     };
 
     const newTasks: ProductionTasks = {
       order_id: newOrderId,
       tasks: [
-        ...lineItems.map((item, i) => ({
-          id: `TI-${newOrderId}-${i}`,
-          task_name: `${item.product.name} (Prep)`,
-          is_complete: false,
-          signed_by: '',
-          notes: ''
-        })),
-        ...ASSEMBLY_TASKS.map((name, i) => ({
+        ...ASSEMBLY_TASKS.slice(0, 4).map((name, i) => ({
           id: `TA-${newOrderId}-${i}`,
           task_name: name,
           is_complete: false,
@@ -399,8 +392,8 @@ const App: React.FC = () => {
     setDbProductionTasks([newTasks, ...dbProductionTasks]);
     setLineItems([]);
     setQuoteStep(1);
-    setActiveView('Orders');
-    alert(`Order #${newOrderNo} processed.`);
+    setActiveView('TaskManager');
+    alert(`Order #${newOrderNo} added to Production Task Board.`);
   };
 
   // --- PRODUCTION > TASK MANAGER Logic ---
@@ -409,6 +402,21 @@ const App: React.FC = () => {
       ...pt,
       tasks: pt.tasks.map(t => t.id === taskId ? { ...t, is_complete: !t.is_complete } : t)
     } : pt));
+
+    // Simple Auto-update status logic
+    const orderTasks = dbProductionTasks.find(pt => pt.order_id === orderId)?.tasks || [];
+    const completedCount = orderTasks.filter(t => t.id === taskId ? !t.is_complete : t.is_complete).length;
+    
+    let newStatus = OrderStatus.InProcess;
+    if (completedCount === orderTasks.length) newStatus = OrderStatus.Ready;
+    else if (completedCount >= orderTasks.length - 1) newStatus = OrderStatus.QualityCheck;
+
+    setDbOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+  };
+
+  const startOrderProduction = (orderId: string) => {
+    setDbOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: OrderStatus.InProcess } : o));
+    setDbProductionTasks(prev => prev.map(pt => pt.order_id === orderId ? { ...pt, started_at: new Date().toISOString() } : pt));
   };
 
   const updateDbTaskSignature = (orderId: string, taskId: string, initials: string) => {
@@ -435,7 +443,6 @@ const App: React.FC = () => {
     const count = filteredOrders.length;
     const inventoryVal = dbProducts.reduce((sum, p) => sum + (p.base_price * p.stockLevel), 0);
     
-    // Simple bar chart calculations
     const ordersPerStore = dbStores.map(s => ({
       name: s.store_name,
       count: dbOrders.filter(o => o.store_id === s.id).length
@@ -444,7 +451,6 @@ const App: React.FC = () => {
     return { revenue, count, inventoryVal, ordersPerStore };
   }, [filteredOrders, dbStores, dbOrders, dbProducts]);
 
-  // Filtering inventory list
   const filteredInventory = useMemo(() => {
     return dbProducts.filter(p => {
       const matchesSearch = p.name.toLowerCase().includes(inventorySearch.toLowerCase()) || 
@@ -454,18 +460,20 @@ const App: React.FC = () => {
     });
   }, [dbProducts, inventorySearch, inventoryCategory]);
 
-  const currentOrder = useMemo(() => dbOrders.find(o => o.id === selectedOrderForTasks), [dbOrders, selectedOrderForTasks]);
-  const currentTasks = useMemo(() => dbProductionTasks.find(pt => pt.order_id === selectedOrderForTasks)?.tasks || [], [dbProductionTasks, selectedOrderForTasks]);
-  const progressPercentage = useMemo(() => {
-    if (!currentTasks.length) return 0;
-    const completed = currentTasks.filter(t => t.is_complete && t.signed_by.length > 0).length;
-    return Math.round((completed / currentTasks.length) * 100);
-  }, [currentTasks]);
+  const filteredTasks = useMemo(() => {
+    return dbOrders.filter(o => tmFilter === 'All' || o.status === tmFilter);
+  }, [dbOrders, tmFilter]);
 
   // View Handlers
   const openOrderDrilldown = (id: string) => {
-    setSelectedOrderForTasks(id);
+    // Note: TaskManager now shows all cards
     setActiveView('TaskManager');
+  };
+
+  // Check if due date is in the past
+  const isLate = (dateStr?: string) => {
+    if (!dateStr) return false;
+    return new Date(dateStr) < new Date();
   };
 
   // Permission Restriction Message
@@ -476,6 +484,14 @@ const App: React.FC = () => {
       <p className="text-sm text-slate-400 font-medium max-w-xs text-center">Your user profile does not have the necessary permissions to view this data node.</p>
     </div>
   );
+
+  // --- Master Key Logic for Data Center ---
+  const canViewDataCenter = useMemo(() => {
+    if (!currentUser) return false;
+    const isSuperUser = currentUser.role === 'SuperAdmin' || currentUser.role === 'Executive' || currentUser.role.toLowerCase().includes('admin');
+    const hasExplicitPermission = currentUserRolePermissions && currentUserRolePermissions['view_data_center'];
+    return isSuperUser || hasExplicitPermission;
+  }, [currentUser, currentUserRolePermissions]);
 
   return (
     <div className="flex h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden">
@@ -521,7 +537,6 @@ const App: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-10">
           {activeView === 'Dashboard' && (
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-700">
-              {/* Filter Bar */}
               <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-3xl border border-slate-200">
                 <div className="flex items-center gap-2 px-3 border-r pr-6"><Filter size={16} className="text-slate-400"/><span className="text-[10px] font-black text-slate-400 uppercase">Filters</span></div>
                 <select value={dashFilterStore} onChange={e => setDashFilterStore(e.target.value)} className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-xs font-bold outline-none">
@@ -719,47 +734,130 @@ const App: React.FC = () => {
 
           {activeView === 'TaskManager' && (
             <div className="max-w-6xl mx-auto space-y-10 animate-in fade-in duration-500">
-               <div className="flex items-center justify-between">
+               <div className="flex flex-wrap items-center justify-between gap-6">
                   <div className="space-y-2">
-                    <h3 className="text-xl font-black uppercase tracking-widest">Relational Task Manager</h3>
-                    <select value={selectedOrderForTasks} onChange={e => setSelectedOrderForTasks(e.target.value)} className="bg-white border rounded-xl px-4 py-2 text-xs font-bold shadow-sm">{dbOrders.map(o => <option key={o.id} value={o.id}>#{o.order_no} - {o.client_info.name}</option>)}</select>
+                    <h3 className="text-2xl font-black uppercase tracking-tight">Production Task Board</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">Manufacturing Dispatch & Progress Control</p>
                   </div>
-                  <div className="flex items-center gap-6 bg-white px-8 py-5 rounded-[32px] border shadow-sm">
-                    <div className="w-48 bg-slate-100 h-2 rounded-full overflow-hidden"><div className="bg-blue-600 h-full transition-all duration-700" style={{width:`${progressPercentage}%`}}></div></div>
-                    <p className="text-sm font-black">{progressPercentage}% Complete</p>
+                  
+                  {/* Status Filter Bar */}
+                  <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border gap-1">
+                    {['All', OrderStatus.Pending, OrderStatus.InProcess, OrderStatus.QualityCheck, OrderStatus.Ready].map(status => (
+                      <button 
+                        key={status} 
+                        onClick={() => setTmFilter(status)}
+                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${tmFilter === status ? 'bg-blue-600 text-white shadow-md shadow-blue-100' : 'text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        {status}
+                      </button>
+                    ))}
                   </div>
                </div>
 
-               {currentOrder && (
-                 <div className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
-                    <table className="w-full text-left">
-                       <thead><tr className="bg-slate-50 border-b"><th className="px-10 py-5 text-[10px] font-black text-slate-400 uppercase border-r w-1/4">Order Profile</th><th className="px-10 py-5 text-[10px] font-black text-slate-400 uppercase">Operational Work-off</th></tr></thead>
-                       <tbody className="align-top divide-x divide-slate-100">
-                          <tr>
-                             <td className="p-10 border-r space-y-6">
-                                <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100"><p className="text-[10px] font-black text-blue-400 uppercase mb-1">Batch ID</p><p className="text-lg font-black tracking-tighter">ORD-{currentOrder.order_no}</p></div>
-                                <div className="space-y-4 text-xs font-bold text-slate-700">
-                                   <p><span className="text-slate-400 uppercase text-[10px] block">Client</span> {currentOrder.client_info.name}</p>
-                                   <p><span className="text-slate-400 uppercase text-[10px] block">Hub</span> {dbStores.find(s => s.id === currentOrder.store_id)?.store_name}</p>
+               <div className="space-y-8 pb-20">
+                 {filteredTasks.length === 0 ? (
+                   <div className="py-32 text-center space-y-4 bg-white rounded-[40px] border border-dashed border-slate-200">
+                      <Clock size={48} className="mx-auto text-slate-200" />
+                      <p className="text-xs text-slate-400 font-black uppercase tracking-widest">No Orders in this queue</p>
+                   </div>
+                 ) : (
+                   filteredTasks.map(order => {
+                     const tasksData = dbProductionTasks.find(pt => pt.order_id === order.id);
+                     const tasks = tasksData?.tasks || [];
+                     const isStarted = order.status !== OrderStatus.Pending && order.status !== OrderStatus.Draft;
+                     const progress = tasks.length > 0 ? Math.round((tasks.filter(t => t.is_complete).length / tasks.length) * 100) : 0;
+                     const deliveryDateLate = isLate(order.due_date);
+
+                     return (
+                       <div key={order.id} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden hover:shadow-xl hover:border-blue-200 transition-all group p-1">
+                          {/* Card Header */}
+                          <div className="p-8 pb-6 flex flex-wrap items-center justify-between gap-6">
+                             <div className="flex items-center gap-6">
+                                <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-all font-black text-xl">#{order.order_no}</div>
+                                <div>
+                                   <h4 className="text-lg font-black text-slate-900 leading-tight">{order.client_info.name}</h4>
+                                   <div className="flex items-center gap-4 mt-1">
+                                      <p className={`text-[10px] font-black uppercase flex items-center gap-1.5 ${deliveryDateLate ? 'text-red-500' : 'text-slate-400'}`}>
+                                        <Calendar size={12} /> Due: {order.due_date || 'TBD'}
+                                      </p>
+                                      {tasksData?.started_at && <span className="text-[9px] font-bold text-slate-300 uppercase">Started: {new Date(tasksData.started_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>}
+                                   </div>
                                 </div>
-                             </td>
-                             <td className="p-10 space-y-3">
-                                {currentTasks.map(task => (
-                                  <div key={task.id} className="flex flex-wrap items-center gap-4 p-4 rounded-2xl border bg-white hover:bg-slate-50/50 transition-all">
-                                     <input type="checkbox" checked={task.is_complete} onChange={() => toggleDbTask(currentOrder.id, task.id)} className="w-5 h-5 rounded border-slate-300 text-blue-600" />
-                                     <span className={`text-xs font-black flex-1 ${task.is_complete ? 'text-slate-300 line-through' : ''}`}>{task.task_name}</span>
-                                     <div className="flex gap-4 items-center">
-                                       <input type="text" placeholder="Notes" value={task.notes || ''} onChange={e => updateDbTaskNotes(currentOrder.id, task.id, e.target.value)} className="w-48 bg-slate-50 border border-slate-100 rounded-lg px-3 py-1.5 text-[10px] font-medium outline-none" />
-                                       <input type="text" maxLength={3} value={task.signed_by} onChange={e => updateDbTaskSignature(currentOrder.id, task.id, e.target.value)} placeholder="Init" className="w-12 bg-white border border-slate-200 rounded px-2 py-1.5 text-[10px] font-black text-center outline-none uppercase" />
+                             </div>
+
+                             <div className="flex items-center gap-4">
+                                <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                                  order.status === OrderStatus.Pending ? 'bg-amber-50 text-amber-600' : 
+                                  order.status === OrderStatus.InProcess ? 'bg-emerald-50 text-emerald-600' : 
+                                  'bg-blue-50 text-blue-600'
+                                }`}>
+                                   {order.status}
+                                </div>
+                                {!isStarted ? (
+                                  <button 
+                                    onClick={() => startOrderProduction(order.id)}
+                                    className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2"
+                                  >
+                                    <Play size={14} fill="currentColor" /> Start Production
+                                  </button>
+                                ) : (
+                                  <div className="w-48 bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                                     <div className="h-full bg-emerald-500 transition-all duration-1000" style={{width: `${progress}%`}}></div>
+                                  </div>
+                                )}
+                             </div>
+                          </div>
+
+                          {/* Middle Row: Items */}
+                          <div className="px-8 mb-8 flex flex-wrap gap-2">
+                             {order.line_items.map((item, idx) => (
+                               <span key={idx} className="bg-slate-50 text-slate-500 px-3 py-1 rounded-lg text-[10px] font-bold border border-slate-100">{item.product.name} x{item.quantity}</span>
+                             ))}
+                          </div>
+
+                          {/* Bottom Row: Assembly Stages */}
+                          <div className={`p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity duration-500 ${!isStarted ? 'opacity-30 pointer-events-none grayscale' : 'opacity-100'}`}>
+                             {tasks.map(task => (
+                               <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.is_complete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100 hover:border-blue-200'}`}>
+                                  <div className="flex items-center gap-3 mb-4">
+                                     <button 
+                                       onClick={() => toggleDbTask(order.id, task.id)}
+                                       className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${task.is_complete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-transparent border border-slate-200'}`}
+                                     >
+                                       <Check size={14} strokeWidth={4} />
+                                     </button>
+                                     <span className={`text-[11px] font-black ${task.is_complete ? 'text-emerald-600 line-through' : 'text-slate-700'}`}>{task.task_name}</span>
+                                  </div>
+                                  
+                                  {/* Task Controls - Shown when in process */}
+                                  <div className="space-y-3">
+                                     <input 
+                                       type="text" 
+                                       placeholder="Notes..." 
+                                       value={task.notes || ''} 
+                                       onChange={e => updateDbTaskNotes(order.id, task.id, e.target.value)}
+                                       className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[9px] font-bold outline-none focus:ring-1 focus:ring-blue-100" 
+                                     />
+                                     <div className="flex items-center justify-between">
+                                        <span className="text-[8px] font-black text-slate-300 uppercase">Worker Init</span>
+                                        <input 
+                                          type="text" 
+                                          maxLength={3} 
+                                          value={task.signed_by} 
+                                          onChange={e => updateDbTaskSignature(order.id, task.id, e.target.value)}
+                                          placeholder="..." 
+                                          className="w-10 bg-white border border-slate-200 rounded-lg py-1.5 text-[9px] font-black text-center uppercase outline-none focus:border-blue-400" 
+                                        />
                                      </div>
                                   </div>
-                                ))}
-                             </td>
-                          </tr>
-                       </tbody>
-                    </table>
-                 </div>
-               )}
+                               </div>
+                             ))}
+                          </div>
+                       </div>
+                     )
+                   })
+                 )}
+               </div>
             </div>
           )}
 
@@ -944,7 +1042,7 @@ const App: React.FC = () => {
                        <tr key={o.id} onClick={() => openOrderDrilldown(o.id)} className="hover:bg-blue-50/40 cursor-pointer transition-all">
                           <td className="px-8 py-6 text-sm font-black">#{o.order_no}<span className="block text-[10px] text-slate-400 font-medium">{o.date}</span></td>
                           <td className="px-8 py-6 text-sm font-bold text-slate-700">{o.client_info.name}</td>
-                          <td className="px-8 py-6"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${o.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>{o.status}</span></td>
+                          <td className="px-8 py-6"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${o.status === OrderStatus.Completed ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>{o.status}</span></td>
                           <td className="px-8 py-6 text-right font-black text-blue-600 text-sm">${o.line_items.reduce((a,b)=>a+(b.product.base_price*b.quantity),0).toFixed(2)}</td>
                        </tr>
                      ))}
@@ -965,68 +1063,70 @@ const App: React.FC = () => {
                </div>
                <div className="bg-white rounded-[32px] border shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
-                    {dcActiveTab === 'Orders' && (
-                      currentUserRolePermissions?.['Order'] ? (
-                        <table className="w-full text-left">
-                          <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">order_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">hub</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">client</th><th className="px-8 py-4 text-right pr-12 text-[10px] font-black uppercase text-slate-400">drill-down</th></tr></thead>
-                          <tbody className="divide-y">
-                            {dbOrders.map(o => (
-                              <tr key={o.id} className="text-xs">
-                                <td className="px-8 py-4 font-mono text-blue-600">{o.id}</td>
-                                <td className="px-8 py-4 font-bold">{o.store_id}</td>
-                                <td className="px-8 py-4">{o.client_info.name}</td>
-                                <td className="px-8 py-4 text-right pr-10"><button onClick={() => openOrderDrilldown(o.id)} className="p-2 hover:bg-slate-50 rounded-xl text-blue-600"><Eye size={16}/></button></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : <RestrictedView />
-                    )}
-                    {dcActiveTab === 'Tasks' && (
-                      currentUserRolePermissions?.['Order Tasks'] ? (
-                        <table className="w-full text-left">
-                          <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">order_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">status</th><th className="px-8 py-4 text-right pr-12 text-[10px] font-black uppercase text-slate-400">trace</th></tr></thead>
-                          <tbody className="divide-y">
-                            {dbProductionTasks.map(pt => (
-                              <tr key={pt.order_id} className="text-xs">
-                                <td className="px-8 py-4 font-mono text-blue-600">{pt.order_id}</td>
-                                <td className="px-8 py-4 font-black uppercase text-[10px]">{pt.tasks.filter(t => t.is_complete).length} of {pt.tasks.length} OK</td>
-                                <td className="px-8 py-4 text-right pr-10"><button onClick={() => openOrderDrilldown(pt.order_id)} className="p-2 hover:bg-slate-50 rounded-xl text-blue-600"><Activity size={16}/></button></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : <RestrictedView />
-                    )}
-                    {dcActiveTab === 'Products' && (
-                      <table className="w-full text-left">
-                        <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">sku</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">name</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">stock</th></tr></thead>
-                        <tbody className="divide-y">
-                          {dbProducts.map(p => (
-                            <tr key={p.id} className="text-xs">
-                              <td className="px-8 py-4 font-mono text-blue-600">{p.id}</td>
-                              <td className="px-8 py-4 font-bold">{p.sku}</td>
-                              <td className="px-8 py-4">{p.name}</td>
-                              <td className="px-8 py-4 font-black">{p.stockLevel}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {dcActiveTab === 'Stores' && (
-                      <table className="w-full text-left">
-                        <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">store_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">store_name</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">manager</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">address</th></tr></thead>
-                        <tbody className="divide-y">
-                          {dbStores.map(s => (
-                            <tr key={s.id} className="text-xs">
-                              <td className="px-8 py-4 font-mono text-blue-600">{s.id}</td>
-                              <td className="px-8 py-4 font-bold">{s.store_name}</td>
-                              <td className="px-8 py-4">{s.manager_name}</td>
-                              <td className="px-8 py-4 font-medium text-slate-500">{s.address}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {!canViewDataCenter ? (
+                      <RestrictedView />
+                    ) : (
+                      <div className="data-content">
+                        {dcActiveTab === 'Orders' && (
+                          <table className="w-full text-left">
+                            <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">order_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">hub</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">client</th><th className="px-8 py-4 text-right pr-12 text-[10px] font-black uppercase text-slate-400">drill-down</th></tr></thead>
+                            <tbody className="divide-y">
+                              {dbOrders.map(o => (
+                                <tr key={o.id} className="text-xs">
+                                  <td className="px-8 py-4 font-mono text-blue-600">{o.id}</td>
+                                  <td className="px-8 py-4 font-bold">{o.store_id}</td>
+                                  <td className="px-8 py-4">{o.client_info.name}</td>
+                                  <td className="px-8 py-4 text-right pr-10"><button onClick={() => openOrderDrilldown(o.id)} className="p-2 hover:bg-slate-50 rounded-xl text-blue-600"><Eye size={16}/></button></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {dcActiveTab === 'Tasks' && (
+                          <table className="w-full text-left">
+                            <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">order_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">status</th><th className="px-8 py-4 text-right pr-12 text-[10px] font-black uppercase text-slate-400">trace</th></tr></thead>
+                            <tbody className="divide-y">
+                              {dbProductionTasks.map(pt => (
+                                <tr key={pt.order_id} className="text-xs">
+                                  <td className="px-8 py-4 font-mono text-blue-600">{pt.order_id}</td>
+                                  <td className="px-8 py-4 font-black uppercase text-[10px]">{pt.tasks.filter(t => t.is_complete).length} of {pt.tasks.length} OK</td>
+                                  <td className="px-8 py-4 text-right pr-10"><button onClick={() => openOrderDrilldown(pt.order_id)} className="p-2 hover:bg-slate-50 rounded-xl text-blue-600"><Activity size={16}/></button></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {dcActiveTab === 'Products' && (
+                          <table className="w-full text-left">
+                            <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">sku</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">name</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">stock</th></tr></thead>
+                            <tbody className="divide-y">
+                              {dbProducts.map(p => (
+                                <tr key={p.id} className="text-xs">
+                                  <td className="px-8 py-4 font-mono text-blue-600">{p.id}</td>
+                                  <td className="px-8 py-4 font-bold">{p.sku}</td>
+                                  <td className="px-8 py-4">{p.name}</td>
+                                  <td className="px-8 py-4 font-black">{p.stockLevel}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {dcActiveTab === 'Stores' && (
+                          <table className="w-full text-left">
+                            <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">store_id</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">store_name</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">manager</th><th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">address</th></tr></thead>
+                            <tbody className="divide-y">
+                              {dbStores.map(s => (
+                                <tr key={s.id} className="text-xs">
+                                  <td className="px-8 py-4 font-mono text-blue-600">{s.id}</td>
+                                  <td className="px-8 py-4 font-bold">{s.store_name}</td>
+                                  <td className="px-8 py-4">{s.manager_name}</td>
+                                  <td className="px-8 py-4 font-medium text-slate-500">{s.address}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
                     )}
                   </div>
                </div>
