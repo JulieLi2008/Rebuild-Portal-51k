@@ -63,6 +63,8 @@ export interface TaskItem {
   task_name: string;
   is_complete: boolean;
   signed_by: string;
+  // Added optional notes property to resolve type error in TaskManager
+  notes?: string;
 }
 
 export interface ProductionTasks {
