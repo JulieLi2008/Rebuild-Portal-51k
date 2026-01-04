@@ -1,8 +1,5 @@
 {
-  "name": "51wood Smart MRP Portal",
-  "description": "An AI-powered manufacturing and order management portal for 51wood, featuring smart quoting, real-time factory tracking, and Gemini-driven order analysis.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
+  "name": "51 汇声成章 Voxia Flow",
+  "description": "An AI-powered tool that transforms informal Chinese conversation transcripts or audio into formal, structured English business proposals using the Gemini 2.5 Flash model.",
+  "requestFramePermissions": []
 }
