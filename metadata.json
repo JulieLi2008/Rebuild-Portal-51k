@@ -1,5 +1,8 @@
 {
-  "name": "BD - 51 汇声成章 Voxia Flow",
-  "description": "An AI-powered tool that transforms informal Chinese conversation transcripts or audio into formal, structured English business proposals using the Gemini 2.5 Flash model.",
-  "requestFramePermissions": []
+  "name": "BD_Rebuild Portal 51k",
+  "description": "The chat was designed for building the application. Prompt was generated from PA-Rebuild Portal 51k",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
 }
