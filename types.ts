@@ -36,6 +36,10 @@ export interface Product {
   category: string;
   stockLevel: number;
   minStock: number;
+  supplier?: string;
+  status?: 'Active' | 'Inactive';
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface QuoteLineItem {

@@ -24,6 +24,10 @@ service cloud.firestore {
       return isApproved() && role() in ['SuperAdmin', 'Admin', 'Executive'];
     }
 
+    function isManager() {
+      return isApproved() && role() == 'Manager';
+    }
+
     match /users/{userId} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow create, update, delete: if isAdmin();
@@ -37,6 +41,11 @@ service cloud.firestore {
     match /stores/{storeId} {
       allow read: if isApproved();
       allow write: if isAdmin();
+    }
+
+    match /catalogProducts/{productId} {
+      allow read: if isApproved();
+      allow write: if isAdmin() || isManager();
     }
 
     match /{document=**} {

@@ -62,6 +62,7 @@ import {
 import { loginWithEmail, logoutUser, listenToAuthState, getUserProfile } from './services/authService';
 import { getRoles, saveRole, updateRolePermissions, deleteRole, RoleRecord } from './services/roleService';
 import { getStores, saveStore, deleteStore } from './services/storeService';
+import { getProducts, saveProduct, deleteProduct } from './services/productService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -187,7 +188,9 @@ const App: React.FC = () => {
   const [dbStores, setDbStores] = useState<StoreInfo[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
   const [storesError, setStoresError] = useState('');
-  const [dbProducts, setDbProducts] = useState<Product[]>(mockDatabase.products);
+  const [dbProducts, setDbProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState('');
   const [dbOrders, setDbOrders] = useState<Order[]>(mockDatabase.orders as Order[]);
   const [dbProductionTasks, setDbProductionTasks] = useState<ProductionTasks[]>(mockDatabase.productionTasks);
   const [dbRoles, setDbRoles] = useState<RoleRecord[]>([]);
@@ -236,6 +239,27 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadProducts = useCallback(async () => {
+    setProductsLoading(true);
+    setProductsError('');
+
+    try {
+      const products = await getProducts();
+
+      if (products.length > 0) {
+        setDbProducts(products);
+      } else {
+        setDbProducts(mockDatabase.products as Product[]);
+      }
+    } catch (err) {
+      console.error('Failed to load products:', err);
+      setProductsError('Could not load products from Firebase.');
+      setDbProducts(mockDatabase.products as Product[]);
+    } finally {
+      setProductsLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -270,6 +294,7 @@ const App: React.FC = () => {
 
         await loadRoles();
         await loadStores();
+        await loadProducts();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -280,7 +305,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores]);
+  }, [loadRoles, loadStores, loadProducts]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -398,6 +423,7 @@ const App: React.FC = () => {
     }
     await loadRoles();
     await loadStores();
+    await loadProducts();
   };
 
   const handleLogout = async () => {
@@ -532,23 +558,43 @@ const App: React.FC = () => {
   };
 
   // --- PRODUCTION > CATALOG Logic ---
-  const handleAddProduct = () => {
-    if (!newProductData.name || !newProductData.sku) return alert("Fill SKU and Name.");
+  const handleAddProduct = async () => {
+    if (!newProductData.name || !newProductData.sku) {
+      alert('Fill SKU and Name.');
+      return;
+    }
+
     const newProd: Product = {
-      id: `P${Date.now()}`,
-      sku: newProductData.sku,
-      name: newProductData.name,
+      id: newProductData.sku.trim(),
+      sku: newProductData.sku.trim(),
+      name: newProductData.name.trim(),
       base_price: parseFloat(newProductData.price) || 0,
       unit: 'Piece',
       dimensions: { w: '0', h: '0', d: '0' },
       modifications: [],
       category: newProductData.category,
-      stockLevel: parseInt(newProductData.stock) || 0,
-      minStock: 5
+      stockLevel: parseInt(newProductData.stock, 10) || 0,
+      minStock: 5,
+      supplier: newProductData.supplier || 'Standard',
+      status: 'Active',
     };
-    setDbProducts([...dbProducts, newProd]);
-    setNewProductData({ name: '', sku: '', category: 'Hardware', price: '0', stock: '10', supplier: 'Standard' });
-    setShowProductModal(false);
+
+    try {
+      await saveProduct(newProd);
+      await loadProducts();
+      setNewProductData({
+        name: '',
+        sku: '',
+        category: 'Hardware',
+        price: '0',
+        stock: '10',
+        supplier: 'Standard',
+      });
+      setShowProductModal(false);
+    } catch (err) {
+      console.error('Failed to save product:', err);
+      alert('Could not save product. Please try again.');
+    }
   };
 
   // --- CSV Import Logic ---
@@ -592,7 +638,7 @@ const App: React.FC = () => {
     e.target.value = '';
   };
 
-  const processImport = () => {
+  const processImport = async () => {
     if (!columnMapping.name || !columnMapping.sku) {
       alert("Please map at least Name and SKU fields.");
       return;
@@ -608,11 +654,12 @@ const App: React.FC = () => {
     const importedProducts: Product[] = csvRows.map((row, idx) => {
       const priceVal = priceIdx !== -1 ? parseFloat(row[priceIdx]) : 0;
       const stockVal = stockIdx !== -1 ? parseInt(row[stockIdx]) : 0;
+      const sku = row[skuIdx] || `SKU-${idx}`;
       
       return {
-        id: `P-IMP-${Date.now()}-${idx}`,
+        id: sku,
         name: row[nameIdx] || 'Unnamed Product',
-        sku: row[skuIdx] || `SKU-${idx}`,
+        sku,
         base_price: isNaN(priceVal) ? 0 : priceVal,
         stockLevel: isNaN(stockVal) ? 0 : stockVal,
         category: categoryIdx !== -1 ? row[categoryIdx] : 'Other',
@@ -620,13 +667,20 @@ const App: React.FC = () => {
         unit: 'Piece',
         dimensions: { w: '0', h: '0', d: '0' },
         modifications: [],
-        minStock: 5
-      } as any;
+        minStock: 5,
+        status: 'Active',
+      };
     });
 
-    setDbProducts(prev => [...prev, ...importedProducts]);
-    setShowImportModal(false);
-    alert(`Successfully imported ${importedProducts.length} items to catalog.`);
+    try {
+      await Promise.all(importedProducts.map((product) => saveProduct(product)));
+      await loadProducts();
+      setShowImportModal(false);
+      alert(`Successfully imported ${importedProducts.length} items to catalog.`);
+    } catch (err) {
+      console.error('Failed to import products:', err);
+      alert('Could not import products. Please check the CSV and try again.');
+    }
   };
 
   // --- SALES > QUOTE BUILDER Logic ---
@@ -1438,6 +1492,18 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {productsLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading products...
+                </p>
+              )}
+
+              {productsError && (
+                <p className="text-sm font-bold text-red-500">
+                  {productsError}
+                </p>
+              )}
+
               {/* CSV Mapping Modal */}
               {showImportModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-6 animate-in fade-in duration-200">
@@ -1608,6 +1674,18 @@ const App: React.FC = () => {
 
           {activeView === 'Inventory' && (
             <div className="space-y-6 animate-in fade-in duration-500">
+               {productsLoading && (
+                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                   Loading products...
+                 </p>
+               )}
+
+               {productsError && (
+                 <p className="text-sm font-bold text-red-500">
+                   {productsError}
+                 </p>
+               )}
+
                {/* Inventory Toolbar */}
                <div className="flex flex-wrap gap-4 items-center bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
                   <div className="flex-1 min-w-[300px] relative">
