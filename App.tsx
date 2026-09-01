@@ -154,7 +154,7 @@ const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLog
             <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-blue-200">
               <Layers size={32} />
             </div>
-            <h1 className="text-2xl font-black tracking-tighter">51K PORTAL</h1>
+            <h1 className="text-2xl font-black tracking-tighter">51Wood Portal</h1>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Enterprise Resource Control</p>
           </div>
 
@@ -1585,7 +1585,7 @@ const App: React.FC = () => {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
           <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
-            Loading 51K Portal
+            Loading 51Wood Portal
           </p>
         </div>
       </div>
@@ -1602,7 +1602,7 @@ const App: React.FC = () => {
       <aside className="w-72 bg-white border-r border-slate-200 p-6 flex flex-col z-50">
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shrink-0"><Layers size={22} /></div>
-          <h1 className="font-black text-lg tracking-tighter">51K PORTAL</h1>
+          <h1 className="font-black text-lg tracking-tighter">51Wood Portal</h1>
         </div>
         <nav className="flex-1 space-y-6 overflow-y-auto scrollbar-hide">
           {showDashboard && (
