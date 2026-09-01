@@ -59,12 +59,47 @@ import {
   PERMISSION_COLUMNS,
   mockDatabase
 } from './script.js';
+import { loginWithEmail, logoutUser, listenToAuthState, getUserProfile } from './services/authService';
 
 /**
  * LOGIN SCREEN COMPONENT
  * Centered professional login card for authentication.
  */
 const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLogin }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const credential = await loginWithEmail(email.trim(), password);
+      const profile = await getUserProfile(credential.user.uid);
+
+      if (!profile) {
+        await logoutUser();
+        setError('Your account exists but has not been approved in the ERP yet.');
+        return;
+      }
+
+      if (!profile.approved) {
+        await logoutUser();
+        setError('Your ERP access is waiting for approval.');
+        return;
+      }
+
+      onLogin(profile);
+    } catch (err) {
+      setError('Invalid email or password.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f1f5f9] flex items-center justify-center p-6 font-sans">
       <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl shadow-slate-200/50 overflow-hidden animate-in fade-in zoom-in-95 duration-500">
@@ -79,55 +114,66 @@ const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLog
           </div>
 
           {/* Form */}
-          <div className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Address</label>
-              <input 
-                type="email" 
-                defaultValue="admin@51wood.ca"
-                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all"
                 placeholder="name@51wood.ca"
+                required
               />
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Security Key</label>
-              <input 
-                type="password" 
-                defaultValue="password123"
-                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all" 
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all"
                 placeholder="••••••••"
+                required
               />
             </div>
-            <button 
-              onClick={() => onLogin(INITIAL_USERS[0] as UserProfile)}
-              className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Authorize System Entry <LogIn size={16} />
+              {isLoading ? 'Authorizing...' : 'Authorize System Entry'} <LogIn size={16} />
             </button>
-          </div>
+            {error && (
+              <p className="text-sm font-bold text-red-500 text-center">{error}</p>
+            )}
+          </form>
 
-          {/* Prototyping Quick Access */}
-          <div className="mt-12 pt-8 border-t border-slate-100">
-            <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] text-center mb-6">Prototyping Sandbox Access</p>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: 'CEO', icon: ShieldCheck, user: INITIAL_USERS[0], color: 'text-blue-600 bg-blue-50' },
-                { label: 'Manager', icon: Building2, user: { ...INITIAL_USERS[1], storeId: 'S1' }, color: 'text-amber-600 bg-amber-50' },
-                { label: 'Worker', icon: Hammer, user: { ...INITIAL_USERS[2], role: 'Worker' }, color: 'text-slate-600 bg-slate-50' }
-              ].map((role) => (
-                <button 
-                  key={role.label}
-                  onClick={() => onLogin(role.user as UserProfile)}
-                  className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-transparent hover:border-slate-200 hover:bg-white transition-all group"
-                >
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${role.color} transition-all group-hover:scale-110`}>
-                    <role.icon size={18} />
-                  </div>
-                  <span className="text-[9px] font-black uppercase text-slate-400">{role.label}</span>
-                </button>
-              ))}
+          {/* Prototyping Quick Access — local development only */}
+          {import.meta.env.DEV && (
+            <div className="mt-12 pt-8 border-t border-slate-100">
+              <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] text-center mb-6">Prototyping Sandbox Access</p>
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: 'CEO', icon: ShieldCheck, user: INITIAL_USERS[0], color: 'text-blue-600 bg-blue-50' },
+                  { label: 'Manager', icon: Building2, user: { ...INITIAL_USERS[1], storeId: 'S1' }, color: 'text-amber-600 bg-amber-50' },
+                  { label: 'Worker', icon: Hammer, user: { ...INITIAL_USERS[2], role: 'Worker' }, color: 'text-slate-600 bg-slate-50' }
+                ].map((role) => (
+                  <button 
+                    key={role.label}
+                    type="button"
+                    onClick={() => onLogin(role.user as UserProfile)}
+                    className="flex flex-col items-center gap-2 p-4 rounded-2xl border border-transparent hover:border-slate-200 hover:bg-white transition-all group"
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${role.color} transition-all group-hover:scale-110`}>
+                      <role.icon size={18} />
+                    </div>
+                    <span className="text-[9px] font-black uppercase text-slate-400">{role.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
@@ -144,8 +190,47 @@ const App: React.FC = () => {
 
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState('Dashboard');
   const [users] = useState<UserProfile[]>(INITIAL_USERS as UserProfile[]);
+
+  useEffect(() => {
+    const unsubscribe = listenToAuthState(async (firebaseUser) => {
+      try {
+        if (!firebaseUser) {
+          setCurrentUser(null);
+          setAuthLoading(false);
+          return;
+        }
+
+        const profile = await getUserProfile(firebaseUser.uid);
+
+        if (!profile || !profile.approved) {
+          await logoutUser();
+          setCurrentUser(null);
+          setAuthLoading(false);
+          return;
+        }
+
+        setCurrentUser(profile);
+
+        if (profile.role === 'Worker') {
+          setActiveView('TaskManager');
+        } else {
+          setActiveView('Dashboard');
+        }
+
+        setAuthLoading(false);
+      } catch (err) {
+        console.error('Failed to load user profile:', err);
+        await logoutUser();
+        setCurrentUser(null);
+        setAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -245,7 +330,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutUser();
     setCurrentUser(null);
     setActiveView('Dashboard');
   };
@@ -634,6 +720,19 @@ const App: React.FC = () => {
   ], [dashboardStats]);
 
   // Conditional Authentication Check
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#f1f5f9] flex items-center justify-center font-sans">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
+            Loading 51K Portal
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
