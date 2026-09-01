@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { 
   FilePlus, 
   ClipboardList, 
@@ -60,6 +60,8 @@ import {
   mockDatabase
 } from './script.js';
 import { loginWithEmail, logoutUser, listenToAuthState, getUserProfile } from './services/authService';
+import { getRoles, saveRole, updateRolePermissions, deleteRole, RoleRecord } from './services/roleService';
+import { getStores, saveStore, deleteStore } from './services/storeService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -182,11 +184,57 @@ const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLog
 
 const App: React.FC = () => {
   // --- Central Data Store ---
-  const [dbStores, setDbStores] = useState<StoreInfo[]>(mockDatabase.stores);
+  const [dbStores, setDbStores] = useState<StoreInfo[]>([]);
+  const [storesLoading, setStoresLoading] = useState(false);
+  const [storesError, setStoresError] = useState('');
   const [dbProducts, setDbProducts] = useState<Product[]>(mockDatabase.products);
   const [dbOrders, setDbOrders] = useState<Order[]>(mockDatabase.orders as Order[]);
   const [dbProductionTasks, setDbProductionTasks] = useState<ProductionTasks[]>(mockDatabase.productionTasks);
-  const [dbRoles, setDbRoles] = useState<any[]>(mockDatabase.roles);
+  const [dbRoles, setDbRoles] = useState<RoleRecord[]>([]);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [rolesError, setRolesError] = useState('');
+
+  const loadRoles = useCallback(async () => {
+    setRolesLoading(true);
+    setRolesError('');
+
+    try {
+      const roles = await getRoles();
+
+      if (roles.length > 0) {
+        setDbRoles(roles);
+      } else {
+        setDbRoles(mockDatabase.roles as RoleRecord[]);
+      }
+    } catch (err) {
+      console.error('Failed to load roles:', err);
+      setRolesError('Could not load roles from Firebase.');
+      setDbRoles(mockDatabase.roles as RoleRecord[]);
+    } finally {
+      setRolesLoading(false);
+    }
+  }, []);
+
+  const loadStores = useCallback(async () => {
+    setStoresLoading(true);
+    setStoresError('');
+
+    try {
+      const stores = await getStores();
+
+      if (stores.length > 0) {
+        setDbStores(stores);
+      } else {
+        setDbStores(mockDatabase.stores as StoreInfo[]);
+      }
+    } catch (err) {
+      console.error('Failed to load stores:', err);
+      setStoresError('Could not load stores from Firebase.');
+      setDbStores(mockDatabase.stores as StoreInfo[]);
+    } finally {
+      setStoresLoading(false);
+    }
+  }, []);
 
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -220,6 +268,8 @@ const App: React.FC = () => {
           setActiveView('Dashboard');
         }
 
+        await loadRoles();
+        await loadStores();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -230,7 +280,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [loadRoles, loadStores]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -250,14 +300,32 @@ const App: React.FC = () => {
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
   const [lineItems, setLineItems] = useState<QuoteLineItem[]>([]);
   const [clientInfo, setClientInfo] = useState({ 
-    store_id: dbStores[0].id, 
-    managerName: dbStores[0].manager_name, 
+    store_id: '', 
+    managerName: '', 
     firstName: '', 
     lastName: '', 
     cellPhone: '', 
     email: '', 
     address: '' 
   });
+
+  useEffect(() => {
+    if (dbStores.length === 0) return;
+
+    const preferredId = currentUser?.storeId || clientInfo.store_id;
+    const selected = dbStores.find((store) => store.id === preferredId) || dbStores[0];
+
+    if (
+      selected &&
+      (clientInfo.store_id !== selected.id || clientInfo.managerName !== selected.manager_name)
+    ) {
+      setClientInfo((prev) => ({
+        ...prev,
+        store_id: selected.id,
+        managerName: selected.manager_name,
+      }));
+    }
+  }, [dbStores, currentUser?.storeId]);
 
   // --- Quote Builder Step 2 New States ---
   const [globalDimensions, setGlobalDimensions] = useState({
@@ -321,13 +389,15 @@ const App: React.FC = () => {
 
   const canAccess = (roles: UserRole[]) => currentUser && roles.includes(currentUser.role);
 
-  const handleLogin = (user: UserProfile) => {
+  const handleLogin = async (user: UserProfile) => {
     setCurrentUser(user);
     if (user.role === 'Worker') {
       setActiveView('TaskManager');
     } else {
       setActiveView('Dashboard');
     }
+    await loadRoles();
+    await loadStores();
   };
 
   const handleLogout = async () => {
@@ -337,62 +407,128 @@ const App: React.FC = () => {
   };
 
   // --- EXECUTIVE > ACCESS CONTROL Logic ---
-  const togglePermission = (roleId: string, permissionName: string) => {
-    setDbRoles(prev => prev.map(role => {
-      if (role.id !== roleId) return role;
-      const currentVal = role.permissions[permissionName] || false;
-      return {
-        ...role,
-        permissions: {
-          ...role.permissions,
-          [permissionName]: !currentVal
-        }
-      };
-    }));
-  };
+  const togglePermission = async (roleId: string, permissionName: string) => {
+    const role = dbRoles.find((r) => r.id === roleId);
+    if (!role) return;
 
-  const handleAddRole = () => {
-    if (!newRoleName.trim()) return alert("Role name is required.");
-    if (editingRoleId) {
-      setDbRoles(prev => prev.map(r => r.id === editingRoleId ? { ...r, name: newRoleName } : r));
-      setEditingRoleId(null);
-    } else {
-      const newRole = {
-        id: `R${Date.now()}`,
-        name: newRoleName,
-        permissions: PERMISSION_COLUMNS.reduce((acc, col) => ({ ...acc, [col]: false }), {})
-      };
-      setDbRoles([...dbRoles, newRole]);
+    const nextPermissions = {
+      ...role.permissions,
+      [permissionName]: !role.permissions?.[permissionName],
+    };
+
+    setDbRoles((prev) =>
+      prev.map((r) =>
+        r.id === roleId ? { ...r, permissions: nextPermissions } : r
+      )
+    );
+
+    try {
+      await updateRolePermissions(roleId, nextPermissions);
+    } catch (err) {
+      console.error('Failed to update role permissions:', err);
+      alert('Could not save permission change. Please refresh and try again.');
+      await loadRoles();
     }
-    setNewRoleName('');
-    setShowRoleModal(false);
   };
 
-  const handleEditRole = (role: any) => {
+  const handleAddRole = async () => {
+    const trimmedName = newRoleName.trim();
+
+    if (!trimmedName) {
+      alert('Role name is required.');
+      return;
+    }
+
+    const permissions =
+      editingRoleId
+        ? dbRoles.find((role) => role.id === editingRoleId)?.permissions || {}
+        : PERMISSION_COLUMNS.reduce(
+            (acc, col) => ({ ...acc, [col]: false }),
+            {} as Record<string, boolean>
+          );
+
+    const roleToSave = {
+      id: trimmedName,
+      name: trimmedName,
+      permissions,
+    };
+
+    try {
+      await saveRole(roleToSave);
+
+      if (editingRoleId && editingRoleId !== trimmedName) {
+        await deleteRole(editingRoleId);
+      }
+
+      await loadRoles();
+      setEditingRoleId(null);
+      setNewRoleName('');
+      setShowRoleModal(false);
+    } catch (err) {
+      console.error('Failed to save role:', err);
+      alert('Could not save role. Please try again.');
+    }
+  };
+
+  const handleEditRole = (role: RoleRecord) => {
     setNewRoleName(role.name);
     setEditingRoleId(role.id);
     setShowRoleModal(true);
   };
 
-  const handleDeleteRole = (id: string) => {
-    if (window.confirm("Are you sure you want to delete this role? This might affect existing users.")) {
-      setDbRoles(prev => prev.filter(r => r.id !== id));
+  const handleDeleteRole = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this role? This might affect existing users.')) {
+      return;
+    }
+
+    try {
+      await deleteRole(id);
+      await loadRoles();
+    } catch (err) {
+      console.error('Failed to delete role:', err);
+      alert('Could not delete role. Please try again.');
     }
   };
 
   // --- EXECUTIVE > STORES Logic ---
-  const handleAddStore = () => {
-    if (!newStoreData.name || !newStoreData.manager) return alert("Fill required fields.");
+  const handleAddStore = async () => {
+    if (!newStoreData.name || !newStoreData.manager) {
+      alert('Fill required fields.');
+      return;
+    }
+
     const newStore: StoreInfo = {
       id: `S${Date.now()}`,
-      store_name: newStoreData.name,
-      manager_name: newStoreData.manager,
-      address: newStoreData.address || 'TBD',
-      commissionRate: parseInt(newStoreData.commission) || 10
+      store_name: newStoreData.name.trim(),
+      manager_name: newStoreData.manager.trim(),
+      address: newStoreData.address.trim() || 'TBD',
+      commissionRate: Number(newStoreData.commission || 0),
+      status: 'Active',
     };
-    setDbStores([...dbStores, newStore]);
-    setNewStoreData({ name: '', manager: '', address: '', commission: '10' });
-    setShowStoreModal(false);
+
+    try {
+      await saveStore(newStore);
+      await loadStores();
+      setNewStoreData({ name: '', manager: '', address: '', commission: '10' });
+      setShowStoreModal(false);
+    } catch (err) {
+      console.error('Failed to save store:', err);
+      alert('Could not save store. Please try again.');
+    }
+  };
+
+  const handleDeleteStore = async (storeId: string) => {
+    if (!window.confirm('Are you sure you want to delete this store?')) {
+      return;
+    }
+
+    try {
+      await deleteStore(storeId);
+      await loadStores();
+    } catch (err) {
+      console.error('Failed to delete store:', err);
+      alert('Could not delete store. Please try again.');
+    }
   };
 
   // --- PRODUCTION > CATALOG Logic ---
@@ -1183,6 +1319,18 @@ const App: React.FC = () => {
                  <button onClick={() => { setNewRoleName(''); setEditingRoleId(null); setShowRoleModal(true); }} className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase shadow-lg shadow-blue-100"><Plus size={14} className="inline mr-2" /> Define New Role</button>
                </div>
                
+               {rolesLoading && (
+                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                   Loading roles...
+                 </p>
+               )}
+
+               {rolesError && (
+                 <p className="text-sm font-bold text-red-500">
+                   {rolesError}
+                 </p>
+               )}
+
                {showRoleModal && (
                  <div className="bg-white p-8 rounded-[32px] border border-blue-200 shadow-xl mb-8 animate-in slide-in-from-top-4">
                    <div className="flex justify-between items-center mb-6"><h4 className="font-black uppercase text-xs">{editingRoleId ? 'Edit Role' : 'Create Access Role'}</h4><button onClick={() => setShowRoleModal(false)}><X size={18} /></button></div>
@@ -1230,6 +1378,16 @@ const App: React.FC = () => {
           {activeView === 'Stores' && (
             <div className="space-y-8 animate-in fade-in duration-500">
               <div className="flex items-center justify-between"><h3 className="text-lg font-black uppercase tracking-widest">Store Network</h3><button onClick={() => setShowStoreModal(true)} className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase"><Plus size={14} className="inline mr-2" /> Open New Hub</button></div>
+              {storesLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading stores...
+                </p>
+              )}
+              {storesError && (
+                <p className="text-sm font-bold text-red-500">
+                  {storesError}
+                </p>
+              )}
               {showStoreModal && (
                  <div className="bg-white p-10 rounded-[40px] border border-blue-200 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
                    <div className="space-y-2"><label className="text-[10px] font-black text-slate-400 uppercase">Hub Name</label><input type="text" value={newStoreData.name} onChange={e => setNewStoreData({...newStoreData, name: e.target.value})} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" /></div>
@@ -1246,7 +1404,7 @@ const App: React.FC = () => {
                       <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all"><Building2 size={28}/></div>
                       <div><h4 className="text-xl font-black">{store.store_name}</h4><p className="text-xs text-slate-400">{store.address}</p></div>
                     </div>
-                    <div className="pt-8 border-t flex justify-between items-center"><p className="text-sm font-black">{store.manager_name}</p><p className="text-sm font-black text-blue-600">{store.commissionRate}% Rate</p></div>
+                    <div className="pt-8 border-t flex justify-between items-center"><p className="text-sm font-black">{store.manager_name}</p><div className="flex items-center gap-3"><p className="text-sm font-black text-blue-600">{store.commissionRate}% Rate</p><button onClick={() => handleDeleteStore(store.id)} className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"><Trash2 size={14}/></button></div></div>
                   </div>
                 ))}
               </div>

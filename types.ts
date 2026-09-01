@@ -82,4 +82,12 @@ export interface StoreInfo {
   manager_name: string;
   address: string;
   commissionRate: number;
+  phone?: string;
+  email?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  status?: 'Active' | 'Inactive';
+  createdAt?: string;
+  updatedAt?: string;
 }
