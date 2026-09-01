@@ -141,3 +141,91 @@ export interface Lead {
   updatedAt: string;
   createdBy: string;
 }
+
+export type QuoteStatus =
+  | 'Draft'
+  | 'Sent'
+  | 'Accepted'
+  | 'Rejected'
+  | 'Converted';
+
+export interface QuoteItem {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  base_price: number;
+  quantity: number;
+  lineTotal: number;
+}
+
+export interface Quote {
+  id: string;
+  quoteNumber: string;
+  customerId: string;
+  leadId?: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  projectAddress: string;
+  storeId: string;
+  managerName: string;
+  lineItems: QuoteItem[];
+  subtotal: number;
+  discount: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  status: QuoteStatus;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export type WorkerType =
+  | 'Designer'
+  | 'Cabinet Maker'
+  | 'Installer'
+  | 'Installer Helper'
+  | 'Sales'
+  | 'Manager'
+  | 'Accounting'
+  | 'Subcontractor'
+  | 'Countertop Subcontractor'
+  | 'Other';
+
+export type EmploymentType =
+  | 'Work by hour'
+  | 'Work by case'
+  | 'Work by piece'
+  | 'Work by contract'
+  | 'Subcontract'
+  | 'Salary'
+  | 'Commission'
+  | 'Other';
+
+export interface TeamMember {
+  id: string;
+  displayName: string;
+  email: string;
+  phone: string;
+  role: string;
+  permissionsRole: string;
+  workerType: WorkerType;
+  employmentType: EmploymentType;
+  storeId?: string;
+  status: 'Active' | 'Inactive';
+  canLogin: boolean;
+  linkedUserId?: string;
+  hourlyRate?: number;
+  pieceRate?: number;
+  caseRate?: number;
+  contractRate?: number;
+  commissionRate?: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}

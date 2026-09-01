@@ -10,7 +10,9 @@
     "seed:roles": "tsx --env-file=.env.local scripts/seedRoles.ts",
     "seed:stores": "tsx --env-file=.env.local scripts/seedStores.ts",
     "seed:products": "tsx --env-file=.env.local scripts/seedProducts.ts",
-    "seed:sample-lead": "tsx --env-file=.env.local scripts/seedSampleLead.ts"
+    "seed:sample-lead": "tsx --env-file=.env.local scripts/seedSampleLead.ts",
+    "seed:sample-quote": "tsx --env-file=.env.local scripts/seedSampleQuote.ts",
+    "seed:team-members": "tsx --env-file=.env.local scripts/seedTeamMembers.ts"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",

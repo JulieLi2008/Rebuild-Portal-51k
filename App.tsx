@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { 
   FilePlus, 
+  FileText,
   ClipboardList, 
   Package, 
   LogOut, 
@@ -55,11 +56,16 @@ import {
   TaskItem,
   Customer,
   Lead,
-  LeadStatus
+  LeadStatus,
+  Quote,
+  QuoteStatus,
+  QuoteItem,
+  EmploymentType,
+  TeamMember,
+  WorkerType,
 } from './types';
 import { 
   INITIAL_USERS, 
-  ASSEMBLY_TASKS, 
   PERMISSION_COLUMNS,
   mockDatabase
 } from './script.js';
@@ -73,6 +79,19 @@ import {
   getLeads,
   updateLeadStatus,
 } from './services/customerLeadService';
+import {
+  createQuote,
+  generateQuoteNumber,
+  getQuotes,
+  makeQuoteItem,
+  updateQuoteStatus,
+} from './services/quoteService';
+import {
+  createTeamMember,
+  deleteTeamMember,
+  getTeamMembers,
+  updateTeamMember,
+} from './services/teamMemberService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -193,6 +212,30 @@ const LoginScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLog
   );
 };
 
+const WORKER_TYPES: WorkerType[] = [
+  'Designer',
+  'Cabinet Maker',
+  'Installer',
+  'Installer Helper',
+  'Sales',
+  'Manager',
+  'Accounting',
+  'Subcontractor',
+  'Countertop Subcontractor',
+  'Other',
+];
+
+const EMPLOYMENT_TYPES: EmploymentType[] = [
+  'Work by hour',
+  'Work by case',
+  'Work by piece',
+  'Work by contract',
+  'Subcontract',
+  'Salary',
+  'Commission',
+  'Other',
+];
+
 const App: React.FC = () => {
   // --- Central Data Store ---
   const [dbStores, setDbStores] = useState<StoreInfo[]>([]);
@@ -203,6 +246,34 @@ const App: React.FC = () => {
   const [productsError, setProductsError] = useState('');
   const [dbCustomers, setDbCustomers] = useState<Customer[]>([]);
   const [dbLeads, setDbLeads] = useState<Lead[]>([]);
+  const [dbQuotes, setDbQuotes] = useState<Quote[]>([]);
+  const [quotesLoading, setQuotesLoading] = useState(false);
+  const [quotesError, setQuotesError] = useState('');
+  const [dbTeamMembers, setDbTeamMembers] = useState<TeamMember[]>([]);
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+  const [teamMembersError, setTeamMembersError] = useState('');
+  const [showTeamMemberModal, setShowTeamMemberModal] = useState(false);
+  const [editingTeamMemberId, setEditingTeamMemberId] = useState<string | null>(null);
+  const [teamMemberTypeFilter, setTeamMemberTypeFilter] = useState<WorkerType | 'All'>('All');
+  const [newTeamMemberData, setNewTeamMemberData] = useState({
+    displayName: '',
+    email: '',
+    phone: '',
+    role: 'CabinetMaker',
+    permissionsRole: 'Worker',
+    workerType: 'Cabinet Maker' as WorkerType,
+    employmentType: 'Work by hour' as EmploymentType,
+    storeId: '',
+    status: 'Active' as 'Active' | 'Inactive',
+    canLogin: false,
+    linkedUserId: '',
+    hourlyRate: '0',
+    pieceRate: '0',
+    caseRate: '0',
+    contractRate: '0',
+    commissionRate: '0',
+    notes: '',
+  });
   const [customerLeadLoading, setCustomerLeadLoading] = useState(false);
   const [customerLeadError, setCustomerLeadError] = useState('');
   const [showLeadModal, setShowLeadModal] = useState(false);
@@ -314,6 +385,36 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadQuotes = useCallback(async () => {
+    setQuotesLoading(true);
+    setQuotesError('');
+
+    try {
+      const quotes = await getQuotes();
+      setDbQuotes(quotes);
+    } catch (err) {
+      console.error('Failed to load quotes:', err);
+      setQuotesError('Could not load quotes from Firebase.');
+    } finally {
+      setQuotesLoading(false);
+    }
+  }, []);
+
+  const loadTeamMembers = useCallback(async () => {
+    setTeamMembersLoading(true);
+    setTeamMembersError('');
+
+    try {
+      const members = await getTeamMembers();
+      setDbTeamMembers(members);
+    } catch (err) {
+      console.error('Failed to load team members:', err);
+      setTeamMembersError('Could not load HR / Labor records from Firebase.');
+    } finally {
+      setTeamMembersLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -350,6 +451,8 @@ const App: React.FC = () => {
         await loadStores();
         await loadProducts();
         await loadCustomersAndLeads();
+        await loadQuotes();
+        await loadTeamMembers();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -360,7 +463,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads]);
+  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -379,6 +482,10 @@ const App: React.FC = () => {
   // --- Quote Workflow State ---
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
   const [lineItems, setLineItems] = useState<QuoteLineItem[]>([]);
+  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [quoteNotes, setQuoteNotes] = useState('');
+  const [quoteDiscount, setQuoteDiscount] = useState('0');
+  const [quoteTaxRate, setQuoteTaxRate] = useState('0.13');
   const [clientInfo, setClientInfo] = useState({ 
     store_id: '', 
     managerName: '', 
@@ -415,6 +522,15 @@ const App: React.FC = () => {
       }));
     }
   }, [dbStores, newLeadData.assignedStoreId]);
+
+  useEffect(() => {
+    if (!newTeamMemberData.storeId && dbStores.length > 0) {
+      setNewTeamMemberData((prev) => ({
+        ...prev,
+        storeId: dbStores[0].id,
+      }));
+    }
+  }, [dbStores, newTeamMemberData.storeId]);
 
   // --- Quote Builder Step 2 New States ---
   const [globalDimensions, setGlobalDimensions] = useState({
@@ -489,6 +605,8 @@ const App: React.FC = () => {
     await loadStores();
     await loadProducts();
     await loadCustomersAndLeads();
+    await loadQuotes();
+    await loadTeamMembers();
   };
 
   const handleLogout = async () => {
@@ -819,6 +937,26 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSelectLeadForQuote = (leadId: string) => {
+    setSelectedLeadId(leadId);
+
+    const lead = dbLeads.find((item) => item.id === leadId);
+    if (!lead) return;
+
+    const nameParts = lead.customerName.split(' ');
+
+    setClientInfo((prev) => ({
+      ...prev,
+      store_id: lead.assignedStoreId || prev.store_id,
+      managerName: lead.assignedManager || prev.managerName,
+      firstName: nameParts[0] || '',
+      lastName: nameParts.slice(1).join(' ') || '',
+      cellPhone: lead.phone || '',
+      email: lead.email || '',
+      address: lead.projectAddress || '',
+    }));
+  };
+
   const addLineItem = (product: Product) => {
     setLineItems(prev => {
       const existing = prev.find(item => item.product.id === product.id);
@@ -833,55 +971,283 @@ const App: React.FC = () => {
     setLineItems(prev => prev.filter(item => item.product.id !== productId));
   };
 
+  const quoteTotals = useMemo(() => {
+    const subtotal = lineItems.reduce(
+      (sum, item) => sum + item.product.base_price * item.quantity,
+      0
+    );
+
+    const discount = Number(quoteDiscount || 0);
+    const taxRate = Number(quoteTaxRate || 0);
+    const taxableAmount = Math.max(subtotal - discount, 0);
+    const taxAmount = taxableAmount * taxRate;
+    const total = taxableAmount + taxAmount;
+
+    return {
+      subtotal,
+      discount,
+      taxRate,
+      taxAmount,
+      total,
+    };
+  }, [lineItems, quoteDiscount, quoteTaxRate]);
+
   const validateQuoteStep1 = () => {
-    if (!clientInfo.firstName || !clientInfo.lastName || !clientInfo.cellPhone) {
-      alert("Required: First Name, Last Name, and Cell Phone.");
+    if (!clientInfo.firstName || !clientInfo.lastName || !clientInfo.cellPhone || !clientInfo.address) {
+      alert('Required: First Name, Last Name, Cell Phone, and Project Address.');
       return;
     }
     setQuoteStep(2);
   };
 
-  const handleSubmitQuote = () => {
-    if (lineItems.length === 0) return alert("No items selected.");
-    const newOrderId = `O${Date.now()}`;
-    const newOrderNo = (400 + dbOrders.length).toString();
+  const handleSubmitQuote = async () => {
+    if (lineItems.length === 0) {
+      alert('No items selected.');
+      return;
+    }
 
-    const newOrder: Order = {
-      id: newOrderId,
-      order_no: newOrderNo,
-      store_id: clientInfo.store_id,
-      manager_name: clientInfo.managerName,
-      client_info: {
-        name: `${clientInfo.firstName} ${clientInfo.lastName}`,
-        address: clientInfo.address,
-        phone: clientInfo.cellPhone,
-        email: clientInfo.email
-      },
-      line_items: [...lineItems],
-      status: OrderStatus.Pending,
-      date: new Date().toISOString().split('T')[0],
-      due_date: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0] // Default 2 weeks
+    if (!clientInfo.firstName || !clientInfo.lastName || !clientInfo.cellPhone || !clientInfo.address) {
+      alert('Required: customer name, cell phone, and project address.');
+      return;
+    }
+
+    const selectedLead = dbLeads.find((lead) => lead.id === selectedLeadId);
+    const customerId = selectedLead?.customerId || `manual-${Date.now()}`;
+    const customerName = `${clientInfo.firstName} ${clientInfo.lastName}`.trim();
+
+    try {
+      await createQuote({
+        quoteNumber: generateQuoteNumber(),
+        customerId,
+        leadId: selectedLeadId || '',
+        customerName,
+        customerEmail: clientInfo.email || '',
+        customerPhone: clientInfo.cellPhone,
+        projectAddress: clientInfo.address,
+        storeId: clientInfo.store_id,
+        managerName: clientInfo.managerName,
+        lineItems: lineItems.map((item): QuoteItem =>
+          makeQuoteItem(
+            {
+              id: item.product.id,
+              sku: item.product.sku,
+              name: item.product.name,
+              category: item.product.category,
+              unit: item.product.unit,
+              base_price: item.product.base_price,
+            },
+            item.quantity
+          )
+        ),
+        subtotal: quoteTotals.subtotal,
+        discount: quoteTotals.discount,
+        taxRate: quoteTotals.taxRate,
+        taxAmount: quoteTotals.taxAmount,
+        total: quoteTotals.total,
+        status: 'Draft',
+        notes: quoteNotes,
+        createdBy: currentUser?.id || '',
+      });
+
+      if (selectedLeadId) {
+        await updateLeadStatus(selectedLeadId, 'Quoted');
+      }
+
+      await Promise.all([
+        loadQuotes(),
+        loadCustomersAndLeads(),
+      ]);
+
+      setLineItems([]);
+      setQuoteStep(1);
+      setSelectedLeadId('');
+      setQuoteNotes('');
+      setQuoteDiscount('0');
+      setQuoteTaxRate('0.13');
+      setClientInfo({
+        store_id: dbStores[0]?.id || '',
+        managerName: dbStores[0]?.manager_name || '',
+        firstName: '',
+        lastName: '',
+        cellPhone: '',
+        email: '',
+        address: '',
+      });
+
+      alert('Quote saved successfully.');
+    } catch (err) {
+      console.error('Failed to save quote:', err);
+      alert('Could not save quote. Please try again.');
+    }
+  };
+
+  const handleQuoteStatusChange = async (quoteId: string, status: QuoteStatus) => {
+    setDbQuotes((prev) =>
+      prev.map((quote) =>
+        quote.id === quoteId ? { ...quote, status } : quote
+      )
+    );
+
+    try {
+      await updateQuoteStatus(quoteId, status);
+    } catch (err) {
+      console.error('Failed to update quote status:', err);
+      alert('Could not update quote status. Please refresh and try again.');
+      await loadQuotes();
+    }
+  };
+
+  const resetTeamMemberForm = () => {
+    setEditingTeamMemberId(null);
+    setNewTeamMemberData({
+      displayName: '',
+      email: '',
+      phone: '',
+      role: 'CabinetMaker',
+      permissionsRole: 'Worker',
+      workerType: 'Cabinet Maker',
+      employmentType: 'Work by hour',
+      storeId: dbStores[0]?.id || '',
+      status: 'Active',
+      canLogin: false,
+      linkedUserId: '',
+      hourlyRate: '0',
+      pieceRate: '0',
+      caseRate: '0',
+      contractRate: '0',
+      commissionRate: '0',
+      notes: '',
+    });
+  };
+
+  const handleSaveTeamMember = async () => {
+    if (!newTeamMemberData.displayName.trim()) {
+      alert('Name is required.');
+      return;
+    }
+
+    const payload = {
+      displayName: newTeamMemberData.displayName.trim(),
+      email: newTeamMemberData.email.trim(),
+      phone: newTeamMemberData.phone.trim(),
+      role: newTeamMemberData.role.trim(),
+      permissionsRole: newTeamMemberData.permissionsRole,
+      workerType: newTeamMemberData.workerType,
+      employmentType: newTeamMemberData.employmentType,
+      storeId: newTeamMemberData.storeId,
+      status: newTeamMemberData.status,
+      canLogin: newTeamMemberData.canLogin,
+      linkedUserId: newTeamMemberData.linkedUserId.trim(),
+      hourlyRate: Number(newTeamMemberData.hourlyRate || 0),
+      pieceRate: Number(newTeamMemberData.pieceRate || 0),
+      caseRate: Number(newTeamMemberData.caseRate || 0),
+      contractRate: Number(newTeamMemberData.contractRate || 0),
+      commissionRate: Number(newTeamMemberData.commissionRate || 0),
+      notes: newTeamMemberData.notes.trim(),
+      createdBy: currentUser?.id || '',
     };
 
-    const newTasks: ProductionTasks = {
-      order_id: newOrderId,
-      tasks: [
-        ...ASSEMBLY_TASKS.slice(0, 4).map((name, i) => ({
-          id: `TA-${newOrderId}-${i}`,
-          task_name: name,
-          is_complete: false,
-          signed_by: '',
-          notes: ''
-        }))
-      ]
-    };
+    try {
+      if (editingTeamMemberId) {
+        const existing = dbTeamMembers.find((member) => member.id === editingTeamMemberId);
 
-    setDbOrders([newOrder, ...dbOrders]);
-    setDbProductionTasks([newTasks, ...dbProductionTasks]);
-    setLineItems([]);
-    setQuoteStep(1);
-    setActiveView('TaskManager');
-    alert(`Order #${newOrderNo} added to Production Task Board.`);
+        await updateTeamMember(editingTeamMemberId, {
+          ...payload,
+          createdAt: existing?.createdAt || '',
+        });
+      } else {
+        await createTeamMember(payload);
+      }
+
+      await loadTeamMembers();
+      resetTeamMemberForm();
+      setShowTeamMemberModal(false);
+    } catch (err) {
+      console.error('Failed to save team member:', err);
+      alert('Could not save HR / Labor record. Please try again.');
+    }
+  };
+
+  const handleEditTeamMember = (member: TeamMember) => {
+    setEditingTeamMemberId(member.id);
+    setNewTeamMemberData({
+      displayName: member.displayName,
+      email: member.email || '',
+      phone: member.phone || '',
+      role: member.role || '',
+      permissionsRole: member.permissionsRole || member.role || 'Worker',
+      workerType: member.workerType || 'Other',
+      employmentType: member.employmentType || 'Other',
+      storeId: member.storeId || dbStores[0]?.id || '',
+      status: member.status || 'Active',
+      canLogin: member.canLogin === true,
+      linkedUserId: member.linkedUserId || '',
+      hourlyRate: String(member.hourlyRate || 0),
+      pieceRate: String(member.pieceRate || 0),
+      caseRate: String(member.caseRate || 0),
+      contractRate: String(member.contractRate || 0),
+      commissionRate: String(member.commissionRate || 0),
+      notes: member.notes || '',
+    });
+    setShowTeamMemberModal(true);
+  };
+
+  const handleDeleteTeamMember = async (memberId: string) => {
+    if (!window.confirm('Are you sure you want to delete this HR / Labor record?')) {
+      return;
+    }
+
+    try {
+      await deleteTeamMember(memberId);
+      await loadTeamMembers();
+    } catch (err) {
+      console.error('Failed to delete team member:', err);
+      alert('Could not delete HR / Labor record. Please try again.');
+    }
+  };
+
+  const handleTeamMemberStatusChange = async (
+    memberId: string,
+    status: 'Active' | 'Inactive'
+  ) => {
+    setDbTeamMembers((prev) =>
+      prev.map((member) =>
+        member.id === memberId ? { ...member, status } : member
+      )
+    );
+
+    try {
+      await updateTeamMember(memberId, { status });
+    } catch (err) {
+      console.error('Failed to update team member status:', err);
+      alert('Could not update status. Please refresh and try again.');
+      await loadTeamMembers();
+    }
+  };
+
+  const filteredTeamMembers = useMemo(() => {
+    return dbTeamMembers.filter((member) => {
+      if (teamMemberTypeFilter === 'All') return true;
+      return member.workerType === teamMemberTypeFilter;
+    });
+  }, [dbTeamMembers, teamMemberTypeFilter]);
+
+  const getTeamMemberRateLabel = (member: TeamMember) => {
+    switch (member.employmentType) {
+      case 'Work by hour':
+        return `$${(member.hourlyRate || 0).toFixed(2)}/hr`;
+      case 'Work by piece':
+        return `$${(member.pieceRate || 0).toFixed(2)}/pc`;
+      case 'Work by case':
+        return `$${(member.caseRate || 0).toFixed(2)}/case`;
+      case 'Work by contract':
+      case 'Subcontract':
+        return `$${(member.contractRate || 0).toFixed(2)}`;
+      case 'Commission':
+        return `${member.commissionRate || 0}%`;
+      default:
+        return '—';
+    }
   };
 
   // --- PRODUCTION > TASK MANAGER Logic ---
@@ -999,6 +1365,8 @@ const App: React.FC = () => {
   const showExecutive = currentUser?.role === 'SuperAdmin';
   const showSales = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager' || currentUser?.role === 'Sales';
   const showDashboard = currentUser?.role !== 'Worker';
+  const showHRLabor = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager' || currentUser?.role === 'Accounting';
+  const canEditHRLabor = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager';
 
   // Dashboard Title
   const userStoreName = dbStores.find(s => s.id === currentUser?.storeId)?.store_name;
@@ -1095,11 +1463,22 @@ const App: React.FC = () => {
             <div>
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">SALES</p>
               <div className="space-y-1">
-                {[{id:'CustomersLeads',label:'Customers / Leads',icon:Users},{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
+                {[{id:'CustomersLeads',label:'Customers / Leads',icon:Users},{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Quotes',label:'Quotes',icon:FileText},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
                   <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {showHRLabor && (
+            <div>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">MANAGEMENT</p>
+              <div className="space-y-1">
+                <button onClick={() => setActiveView('HRLabor')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === 'HRLabor' ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                  <User size={18} /><span className="font-bold text-xs truncate">HR / Labor</span>
+                </button>
               </div>
             </div>
           )}
@@ -1422,6 +1801,23 @@ const App: React.FC = () => {
                     <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden p-10">
                       <h3 className="text-sm font-black uppercase tracking-widest mb-10 border-b pb-4">Step 1: Client Enrollment</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                         <div className="space-y-1.5 md:col-span-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
+                             Select Existing Lead
+                           </label>
+                           <select
+                             value={selectedLeadId}
+                             onChange={(e) => handleSelectLeadForQuote(e.target.value)}
+                             className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+                           >
+                             <option value="">Manual / No Lead Selected</option>
+                             {dbLeads.map((lead) => (
+                               <option key={lead.id} value={lead.id}>
+                                 {lead.customerName} - {lead.projectType} - {lead.status}
+                               </option>
+                             ))}
+                           </select>
+                         </div>
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Select Hub</label>
                            <select 
                             value={clientInfo.store_id} 
@@ -1436,7 +1832,8 @@ const App: React.FC = () => {
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">First Name *</label><input type="text" value={clientInfo.firstName} onChange={e => setClientInfo({...clientInfo, firstName: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Last Name *</label><input type="text" value={clientInfo.lastName} onChange={e => setClientInfo({...clientInfo, lastName: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
                          <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Cell Phone *</label><input type="text" value={clientInfo.cellPhone} onChange={e => setClientInfo({...clientInfo, cellPhone: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
-                         <div className="space-y-1.5 md:col-span-2"><label className="text-xs font-bold text-slate-500">Project Address</label><input type="text" value={clientInfo.address} onChange={e => setClientInfo({...clientInfo, address: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
+                         <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500">Email</label><input type="email" value={clientInfo.email} onChange={e => setClientInfo({...clientInfo, email: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
+                         <div className="space-y-1.5 md:col-span-2"><label className="text-xs font-bold text-slate-500">Project Address *</label><input type="text" value={clientInfo.address} onChange={e => setClientInfo({...clientInfo, address: e.target.value})} className="w-full border p-3 rounded-xl text-sm outline-none focus:border-blue-400" /></div>
                       </div>
                       <div className="mt-10 flex justify-end"><button onClick={validateQuoteStep1} className="bg-slate-900 text-white px-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-blue-600 transition-all">Proceed to Configurator <ChevronRight size={14}/></button></div>
                     </div>
@@ -1549,19 +1946,512 @@ const App: React.FC = () => {
                           </div>
                         )}
                      </div>
-                     <div className="flex justify-between items-center mb-8">
-                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Estimated Total</span>
-                        <span className="text-2xl font-black text-slate-900 tracking-tighter">${lineItems.reduce((a,b) => a+(b.product.base_price*b.quantity), 0).toFixed(2)}</span>
+                     <div className="space-y-3 mb-8">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Subtotal</span>
+                          <span className="text-sm font-black text-slate-900">${quoteTotals.subtotal.toFixed(2)}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Discount</label>
+                          <input
+                            type="number"
+                            value={quoteDiscount}
+                            onChange={(e) => setQuoteDiscount(e.target.value)}
+                            min="0"
+                            className="w-full bg-slate-50 border p-3 rounded-xl text-sm font-bold outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Tax Rate</label>
+                          <input
+                            type="number"
+                            value={quoteTaxRate}
+                            onChange={(e) => setQuoteTaxRate(e.target.value)}
+                            min="0"
+                            step="0.01"
+                            className="w-full bg-slate-50 border p-3 rounded-xl text-sm font-bold outline-none"
+                          />
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Tax Amount</span>
+                          <span className="text-sm font-black text-slate-900">${quoteTotals.taxAmount.toFixed(2)}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Notes</label>
+                          <textarea
+                            value={quoteNotes}
+                            onChange={(e) => setQuoteNotes(e.target.value)}
+                            placeholder="Quote notes..."
+                            className="w-full bg-slate-50 border p-3 rounded-xl text-sm outline-none min-h-[80px]"
+                          />
+                        </div>
+                        <div className="flex justify-between items-center pt-2">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em]">Estimated Total</span>
+                          <span className="text-2xl font-black text-slate-900 tracking-tighter">${quoteTotals.total.toFixed(2)}</span>
+                        </div>
                      </div>
                      <button 
                         onClick={handleSubmitQuote} 
                         disabled={lineItems.length === 0} 
                         className="w-full bg-blue-600 disabled:opacity-30 text-white py-5 rounded-3xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all transform hover:-translate-y-0.5"
                      >
-                       Submit Production Order
+                       Save Quote
                      </button>
                   </div>
                </div>
+            </div>
+          )}
+
+          {activeView === 'Quotes' && (
+            <div className="space-y-8 animate-in fade-in duration-500">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black uppercase tracking-widest">Quotes</h3>
+              </div>
+
+              {quotesLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading quotes...
+                </p>
+              )}
+
+              {quotesError && (
+                <p className="text-sm font-bold text-red-500">
+                  {quotesError}
+                </p>
+              )}
+
+              <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide">
+                <table className="w-full text-left min-w-[1000px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b">
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Quote No</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Phone</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Project Address</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Total</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {dbQuotes.map((quote) => (
+                      <tr key={quote.id} className="hover:bg-slate-50/50">
+                        <td className="px-8 py-6 text-sm font-black">{quote.quoteNumber}</td>
+                        <td className="px-8 py-6 text-sm font-black">{quote.customerName}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{quote.customerPhone}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{quote.projectAddress}</td>
+                        <td className="px-8 py-6">
+                          <select
+                            value={quote.status}
+                            onChange={(e) => handleQuoteStatusChange(quote.id, e.target.value as QuoteStatus)}
+                            className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                          >
+                            {['Draft', 'Sent', 'Accepted', 'Rejected', 'Converted'].map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-8 py-6 text-right font-black text-blue-600">${quote.total.toFixed(2)}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">
+                          {quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    {dbQuotes.length === 0 && !quotesLoading && (
+                      <tr>
+                        <td colSpan={7} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                          No quotes found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeView === 'HRLabor' && (
+            <div className="space-y-8 animate-in fade-in duration-500">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black uppercase tracking-widest">HR / Labor Management</h3>
+                {canEditHRLabor && (
+                  <button
+                    onClick={() => {
+                      resetTeamMemberForm();
+                      setShowTeamMemberModal(true);
+                    }}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase shadow-lg shadow-blue-100"
+                  >
+                    <Plus size={14} className="inline mr-2" /> Add Team Member
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {(['All', ...WORKER_TYPES] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setTeamMemberTypeFilter(type)}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                      teamMemberTypeFilter === type
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-100'
+                        : 'bg-white text-slate-400 border border-slate-200 hover:text-blue-600'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+
+              {teamMembersLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading HR / Labor records...
+                </p>
+              )}
+
+              {teamMembersError && (
+                <p className="text-sm font-bold text-red-500">
+                  {teamMembersError}
+                </p>
+              )}
+
+              {showTeamMemberModal && canEditHRLabor && (
+                <div className="bg-white p-10 rounded-[40px] border border-blue-200 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                  <div className="md:col-span-2 flex justify-between items-center">
+                    <h4 className="font-black uppercase text-xs">
+                      {editingTeamMemberId ? 'Edit Team Member' : 'Add Team Member'}
+                    </h4>
+                    <button
+                      onClick={() => {
+                        resetTeamMemberForm();
+                        setShowTeamMemberModal(false);
+                      }}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Name *</label>
+                    <input
+                      type="text"
+                      value={newTeamMemberData.displayName}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, displayName: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Email</label>
+                    <input
+                      type="email"
+                      value={newTeamMemberData.email}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, email: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Phone</label>
+                    <input
+                      type="text"
+                      value={newTeamMemberData.phone}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, phone: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Business Role</label>
+                    <input
+                      type="text"
+                      value={newTeamMemberData.role}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, role: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Permission Role</label>
+                    <select
+                      value={newTeamMemberData.permissionsRole}
+                      onChange={(e) =>
+                        setNewTeamMemberData({
+                          ...newTeamMemberData,
+                          permissionsRole: e.target.value,
+                        })
+                      }
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {!dbRoles.some((role) => role.name === newTeamMemberData.permissionsRole) && (
+                        <option value={newTeamMemberData.permissionsRole}>
+                          {newTeamMemberData.permissionsRole || 'Select Role'}
+                        </option>
+                      )}
+                      {dbRoles.map((role) => (
+                        <option key={role.id} value={role.name}>
+                          {role.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Worker Type</label>
+                    <select
+                      value={newTeamMemberData.workerType}
+                      onChange={(e) =>
+                        setNewTeamMemberData({
+                          ...newTeamMemberData,
+                          workerType: e.target.value as WorkerType,
+                        })
+                      }
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {WORKER_TYPES.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Employment Type</label>
+                    <select
+                      value={newTeamMemberData.employmentType}
+                      onChange={(e) =>
+                        setNewTeamMemberData({
+                          ...newTeamMemberData,
+                          employmentType: e.target.value as EmploymentType,
+                        })
+                      }
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {EMPLOYMENT_TYPES.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Store</label>
+                    <select
+                      value={newTeamMemberData.storeId}
+                      onChange={(e) =>
+                        setNewTeamMemberData({
+                          ...newTeamMemberData,
+                          storeId: e.target.value,
+                        })
+                      }
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {dbStores.map((store) => (
+                        <option key={store.id} value={store.id}>
+                          {store.store_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Status</label>
+                    <select
+                      value={newTeamMemberData.status}
+                      onChange={(e) =>
+                        setNewTeamMemberData({
+                          ...newTeamMemberData,
+                          status: e.target.value as 'Active' | 'Inactive',
+                        })
+                      }
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2 flex items-end">
+                    <label className="flex items-center gap-3 text-xs font-black uppercase text-slate-500 pb-3">
+                      <input
+                        type="checkbox"
+                        checked={newTeamMemberData.canLogin}
+                        onChange={(e) =>
+                          setNewTeamMemberData({
+                            ...newTeamMemberData,
+                            canLogin: e.target.checked,
+                          })
+                        }
+                      />
+                      Can Login
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Linked Firebase UID</label>
+                    <input
+                      type="text"
+                      value={newTeamMemberData.linkedUserId}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, linkedUserId: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Hourly Rate</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTeamMemberData.hourlyRate}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, hourlyRate: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Piece Rate</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTeamMemberData.pieceRate}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, pieceRate: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Case Rate</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTeamMemberData.caseRate}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, caseRate: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Contract Rate</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTeamMemberData.contractRate}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, contractRate: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Commission Rate</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newTeamMemberData.commissionRate}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, commissionRate: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Notes</label>
+                    <textarea
+                      value={newTeamMemberData.notes}
+                      onChange={(e) => setNewTeamMemberData({ ...newTeamMemberData, notes: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none min-h-[90px]"
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex justify-end gap-3 mt-4">
+                    <button
+                      onClick={() => {
+                        resetTeamMemberForm();
+                        setShowTeamMemberModal(false);
+                      }}
+                      className="px-6 font-bold text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveTeamMember}
+                      className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase"
+                    >
+                      {editingTeamMemberId ? 'Save Changes' : 'Save Team Member'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide">
+                <table className="w-full text-left min-w-[1200px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b">
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Name</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Worker Type</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Employment</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Permission Role</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Store</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Contact</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Login</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Rate</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
+                      {canEditHRLabor && (
+                        <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Actions</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredTeamMembers.map((member) => {
+                      const storeName = dbStores.find((store) => store.id === member.storeId)?.store_name || member.storeId || '—';
+
+                      return (
+                        <tr key={member.id} className="hover:bg-slate-50/50">
+                          <td className="px-8 py-6">
+                            <p className="text-sm font-black">{member.displayName}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">{member.role || '—'}</p>
+                          </td>
+                          <td className="px-8 py-6 text-xs font-bold text-slate-500">{member.workerType}</td>
+                          <td className="px-8 py-6 text-xs font-bold text-slate-500">{member.employmentType}</td>
+                          <td className="px-8 py-6 text-xs font-bold text-slate-500">{member.permissionsRole || '—'}</td>
+                          <td className="px-8 py-6 text-xs font-bold text-slate-500">{storeName}</td>
+                          <td className="px-8 py-6">
+                            <p className="text-xs font-bold text-slate-500">{member.phone || '—'}</p>
+                            <p className="text-[10px] text-slate-400 mt-1">{member.email || '—'}</p>
+                          </td>
+                          <td className="px-8 py-6 text-xs font-black uppercase">
+                            <span className={member.canLogin ? 'text-emerald-600' : 'text-slate-400'}>
+                              {member.canLogin ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </td>
+                          <td className="px-8 py-6 text-xs font-black text-blue-600">
+                            {getTeamMemberRateLabel(member)}
+                          </td>
+                          <td className="px-8 py-6">
+                            {canEditHRLabor ? (
+                              <select
+                                value={member.status}
+                                onChange={(e) =>
+                                  handleTeamMemberStatusChange(member.id, e.target.value as 'Active' | 'Inactive')
+                                }
+                                className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                              >
+                                <option value="Active">Active</option>
+                                <option value="Inactive">Inactive</option>
+                              </select>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase text-slate-500">{member.status}</span>
+                            )}
+                          </td>
+                          {canEditHRLabor && (
+                            <td className="px-8 py-6">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleEditTeamMember(member)}
+                                  className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteTeamMember(member.id)}
+                                  className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    {filteredTeamMembers.length === 0 && !teamMembersLoading && (
+                      <tr>
+                        <td colSpan={canEditHRLabor ? 10 : 9} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                          No team members found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

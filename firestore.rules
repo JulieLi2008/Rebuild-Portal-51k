@@ -56,6 +56,15 @@ service cloud.firestore {
       allow read, write: if isAdmin() || isManager() || role() == 'Sales';
     }
 
+    match /quotes/{quoteId} {
+      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+    }
+
+    match /teamMembers/{memberId} {
+      allow read: if isAdmin() || isManager() || role() == 'Accounting';
+      allow create, update, delete: if isAdmin() || isManager();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
