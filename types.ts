@@ -229,3 +229,97 @@ export interface TeamMember {
   updatedAt: string;
   createdBy: string;
 }
+
+export type OrderStatusV2 =
+  | 'Pending'
+  | 'In Process'
+  | 'Quality Check'
+  | 'Ready'
+  | 'Completed'
+  | 'Cancelled';
+
+export type PaymentStatus =
+  | 'Unpaid'
+  | 'Deposit Paid'
+  | 'Paid'
+  | 'Refunded';
+
+export type ProductionStatus =
+  | 'Not Started'
+  | 'In Production'
+  | 'Quality Check'
+  | 'Ready'
+  | 'Completed';
+
+export interface FirestoreOrder {
+  id: string;
+  orderNumber: string;
+  quoteId: string;
+  quoteNumber: string;
+  customerId: string;
+  leadId?: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  projectAddress: string;
+  storeId: string;
+  managerName: string;
+  lineItems: QuoteItem[];
+  subtotal: number;
+  discount: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  status: OrderStatusV2;
+  paymentStatus: PaymentStatus;
+  productionStatus: ProductionStatus;
+  orderDate: string;
+  dueDate?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export type ProductionTaskStatus =
+  | 'Not Started'
+  | 'In Progress'
+  | 'Quality Check'
+  | 'Ready'
+  | 'Completed';
+
+export type ProductionTaskType =
+  | 'Design'
+  | 'Production'
+  | 'Installation'
+  | 'Quality'
+  | 'Logistics';
+
+export interface FirestoreTaskItem {
+  id: string;
+  taskName: string;
+  taskType: ProductionTaskType;
+  isComplete: boolean;
+  assignedTeamMemberId?: string;
+  assignedTeamMemberName?: string;
+  signedBy?: string;
+  notes?: string;
+  completedAt?: string;
+}
+
+export interface FirestoreProductionTask {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  quoteId: string;
+  customerId: string;
+  customerName: string;
+  storeId: string;
+  status: ProductionTaskStatus;
+  startedAt?: string;
+  completedAt?: string;
+  tasks: FirestoreTaskItem[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}

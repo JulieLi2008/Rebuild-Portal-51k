@@ -87,12 +87,15 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if isAdmin() || isManager() || isSales() || isAccounting() || isWorkerRole();
-      allow write: if isAdmin() || isManager();
+      allow create, update: if isAdmin() || isManager() || isSales();
+      allow delete: if isAdmin();
     }
 
     match /productionTasks/{taskId} {
       allow read: if isAdmin() || isManager() || isWorkerRole();
-      allow write: if isAdmin() || isManager() || isWorkerRole();
+      allow create: if isAdmin() || isManager() || isSales();
+      allow update: if isAdmin() || isManager() || isWorkerRole();
+      allow delete: if isAdmin();
     }
 
     match /{document=**} {

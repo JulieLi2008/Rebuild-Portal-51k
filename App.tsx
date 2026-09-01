@@ -63,6 +63,11 @@ import {
   EmploymentType,
   TeamMember,
   WorkerType,
+  FirestoreOrder,
+  FirestoreProductionTask,
+  OrderStatusV2,
+  PaymentStatus,
+  ProductionStatus,
 } from './types';
 import { 
   INITIAL_USERS, 
@@ -92,6 +97,14 @@ import {
   getTeamMembers,
   updateTeamMember,
 } from './services/teamMemberService';
+import {
+  convertQuoteToOrder,
+  getOrders,
+  getProductionTasks,
+  updateOrderStatus,
+  updatePaymentStatus,
+  updateProductionStatus,
+} from './services/orderService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -272,6 +285,10 @@ const App: React.FC = () => {
   const [dbQuotes, setDbQuotes] = useState<Quote[]>([]);
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [quotesError, setQuotesError] = useState('');
+  const [firestoreOrders, setFirestoreOrders] = useState<FirestoreOrder[]>([]);
+  const [firestoreProductionTasks, setFirestoreProductionTasks] = useState<FirestoreProductionTask[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
   const [dbTeamMembers, setDbTeamMembers] = useState<TeamMember[]>([]);
   const [teamMembersLoading, setTeamMembersLoading] = useState(false);
   const [teamMembersError, setTeamMembersError] = useState('');
@@ -438,6 +455,28 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadOrdersAndTasks = useCallback(async () => {
+    setOrdersLoading(true);
+    setOrdersError('');
+
+    try {
+      const orders = await getOrders();
+      setFirestoreOrders(orders);
+    } catch (err) {
+      console.error('Failed to load orders:', err);
+      setOrdersError('Could not load orders from Firebase.');
+    }
+
+    try {
+      const tasks = await getProductionTasks();
+      setFirestoreProductionTasks(tasks);
+    } catch (err) {
+      console.error('Failed to load production tasks:', err);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -476,6 +515,7 @@ const App: React.FC = () => {
         await loadCustomersAndLeads();
         await loadQuotes();
         await loadTeamMembers();
+        await loadOrdersAndTasks();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -486,7 +526,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers]);
+  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers, loadOrdersAndTasks]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -639,6 +679,7 @@ const App: React.FC = () => {
     await loadCustomersAndLeads();
     await loadQuotes();
     await loadTeamMembers();
+    await loadOrdersAndTasks();
   };
 
   const handleLogout = async () => {
@@ -1129,6 +1170,88 @@ const App: React.FC = () => {
     }
   };
 
+  const handleConvertQuoteToOrder = async (quote: Quote) => {
+    if (quote.status !== 'Accepted') {
+      alert('Only accepted quotes can be converted to orders.');
+      return;
+    }
+
+    if (!window.confirm(`Convert quote ${quote.quoteNumber} to an order?`)) {
+      return;
+    }
+
+    try {
+      const result = await convertQuoteToOrder(quote, currentUser?.id || '');
+
+      await Promise.all([
+        loadQuotes(),
+        loadOrdersAndTasks(),
+      ]);
+
+      alert(`Order ${result.orderNumber} created successfully.`);
+    } catch (err: any) {
+      console.error('Failed to convert quote:', err);
+      alert(err?.message || 'Could not convert quote to order. Please try again.');
+    }
+  };
+
+  const handleOrderStatusChange = async (
+    orderId: string,
+    status: OrderStatusV2
+  ) => {
+    setFirestoreOrders((prev) =>
+      prev.map((order) =>
+        order.id === orderId ? { ...order, status } : order
+      )
+    );
+
+    try {
+      await updateOrderStatus(orderId, status);
+    } catch (err) {
+      console.error('Failed to update order status:', err);
+      alert('Could not update order status. Please refresh and try again.');
+      await loadOrdersAndTasks();
+    }
+  };
+
+  const handlePaymentStatusChange = async (
+    orderId: string,
+    paymentStatus: PaymentStatus
+  ) => {
+    setFirestoreOrders((prev) =>
+      prev.map((order) =>
+        order.id === orderId ? { ...order, paymentStatus } : order
+      )
+    );
+
+    try {
+      await updatePaymentStatus(orderId, paymentStatus);
+    } catch (err) {
+      console.error('Failed to update payment status:', err);
+      alert('Could not update payment status. Please refresh and try again.');
+      await loadOrdersAndTasks();
+    }
+  };
+
+  const handleProductionStatusChange = async (
+    orderId: string,
+    productionStatus: ProductionStatus
+  ) => {
+    setFirestoreOrders((prev) =>
+      prev.map((order) =>
+        order.id === orderId ? { ...order, productionStatus } : order
+      )
+    );
+
+    try {
+      await updateProductionStatus(orderId, productionStatus);
+    } catch (err) {
+      console.error('Failed to update production status:', err);
+      alert('Could not update production status. Please refresh and try again.');
+      await loadOrdersAndTasks();
+    }
+  };
+
   const resetTeamMemberForm = () => {
     setEditingTeamMemberId(null);
     setNewTeamMemberData({
@@ -1358,6 +1481,14 @@ const App: React.FC = () => {
     });
   }, [dbOrders, tmFilter, currentUser]);
 
+  const filteredFirestoreProductionTasks = useMemo(() => {
+    return firestoreProductionTasks.filter((task) => {
+      const matchesStatus = tmFilter === 'All' || task.status === tmFilter;
+      const matchesStore = !currentUser?.storeId || task.storeId === currentUser.storeId;
+      return matchesStatus && matchesStore;
+    });
+  }, [firestoreProductionTasks, tmFilter, currentUser]);
+
   const filteredLeads = useMemo(() => {
     return dbLeads.filter((lead) => {
       if (leadStatusFilter === 'All') return true;
@@ -1394,6 +1525,7 @@ const App: React.FC = () => {
   const showCustomersLeads = hasPermission('view_customers') || hasPermission('view_leads');
   const showQuoteBuilder = hasPermission('create_quotes');
   const showQuotes = hasPermission('view_quotes');
+  const canConvertQuotes = hasPermission('convert_quotes') || currentUser?.role === 'Sales';
   const showOrders = hasPermission('view_orders');
   const showHRLabor = hasPermission('view_hr_labor');
   const canCreateHRLabor = hasPermission('create_team_members');
@@ -2084,6 +2216,7 @@ const App: React.FC = () => {
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Total</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Created</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -2108,11 +2241,26 @@ const App: React.FC = () => {
                         <td className="px-8 py-6 text-xs font-bold text-slate-500">
                           {quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : '—'}
                         </td>
+                        <td className="px-8 py-6">
+                          {quote.status === 'Accepted' && canConvertQuotes && (
+                            <button
+                              onClick={() => handleConvertQuoteToOrder(quote)}
+                              className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm shadow-blue-100 hover:bg-blue-700 transition-all"
+                            >
+                              Convert to Order
+                            </button>
+                          )}
+                          {quote.status === 'Converted' && (
+                            <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">
+                              Converted
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {dbQuotes.length === 0 && !quotesLoading && (
                       <tr>
-                        <td colSpan={7} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                        <td colSpan={8} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
                           No quotes found
                         </td>
                       </tr>
@@ -2518,9 +2666,8 @@ const App: React.FC = () => {
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">Manufacturing Dispatch & Progress Control</p>
                   </div>
                   
-                  {/* Status Filter Bar */}
                   <div className="flex bg-white p-1.5 rounded-2xl shadow-sm border gap-1">
-                    {['All', OrderStatus.Pending, OrderStatus.InProcess, OrderStatus.QualityCheck, OrderStatus.Ready].map(status => (
+                    {['All', 'Not Started', 'In Progress', 'Quality Check', 'Ready', 'Completed'].map(status => (
                       <button 
                         key={status} 
                         onClick={() => setTmFilter(status)}
@@ -2532,107 +2679,67 @@ const App: React.FC = () => {
                   </div>
                </div>
 
+               {ordersLoading && (
+                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                   Loading production tasks...
+                 </p>
+               )}
+
+               {ordersError && (
+                 <p className="text-sm font-bold text-red-500">
+                   {ordersError}
+                 </p>
+               )}
+
                <div className="space-y-8 pb-20">
-                 {filteredTasks.length === 0 ? (
+                 {filteredFirestoreProductionTasks.length === 0 ? (
                    <div className="py-32 text-center space-y-4 bg-white rounded-[40px] border border-dashed border-slate-200">
                       <Clock size={48} className="mx-auto text-slate-200" />
-                      <p className="text-xs text-slate-400 font-black uppercase tracking-widest">No Orders in this queue</p>
+                      <p className="text-xs text-slate-400 font-black uppercase tracking-widest">
+                        No live production tasks yet. Convert an accepted quote to create production tasks.
+                      </p>
                    </div>
                  ) : (
-                   filteredTasks.map(order => {
-                     const tasksData = dbProductionTasks.find(pt => pt.order_id === order.id);
-                     const tasks = tasksData?.tasks || [];
-                     const isStarted = order.status !== OrderStatus.Pending && order.status !== OrderStatus.Draft;
-                     const progress = tasks.length > 0 ? Math.round((tasks.filter(t => t.is_complete).length / tasks.length) * 100) : 0;
-                     const deliveryDateLate = isLate(order.due_date);
+                   filteredFirestoreProductionTasks.map((taskRecord) => {
+                     const progress = taskRecord.tasks.length > 0
+                       ? Math.round((taskRecord.tasks.filter((task) => task.isComplete).length / taskRecord.tasks.length) * 100)
+                       : 0;
 
                      return (
-                       <div key={order.id} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden hover:shadow-xl hover:border-blue-200 transition-all group p-1">
-                          {/* Card Header */}
+                       <div key={taskRecord.id} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden hover:shadow-xl hover:border-blue-200 transition-all group p-1">
                           <div className="p-8 pb-6 flex flex-wrap items-center justify-between gap-6">
                              <div className="flex items-center gap-6">
-                                <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-all font-black text-xl">#{order.order_no}</div>
+                                <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-600 transition-all font-black text-xs">{taskRecord.orderNumber}</div>
                                 <div>
-                                   <h4 className="text-lg font-black text-slate-900 leading-tight">{order.client_info.name}</h4>
-                                   <div className="flex items-center gap-4 mt-1">
-                                      <p className={`text-[10px] font-black uppercase flex items-center gap-1.5 ${deliveryDateLate ? 'text-red-500' : 'text-slate-400'}`}>
-                                        <Calendar size={12} /> Due: {order.due_date || 'TBD'}
-                                      </p>
-                                      {tasksData?.started_at && <span className="text-[9px] font-bold text-slate-300 uppercase">Started: {new Date(tasksData.started_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>}
-                                   </div>
+                                   <h4 className="text-lg font-black text-slate-900 leading-tight">{taskRecord.customerName}</h4>
+                                   <p className="text-[10px] font-black uppercase text-slate-400 mt-1">Order {taskRecord.orderNumber}</p>
                                 </div>
                              </div>
-
                              <div className="flex items-center gap-4">
-                                <div className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                                  order.status === OrderStatus.Pending ? 'bg-amber-50 text-amber-600' : 
-                                  order.status === OrderStatus.InProcess ? 'bg-emerald-50 text-emerald-600' : 
-                                  'bg-blue-50 text-blue-600'
-                                }`}>
-                                   {order.status}
+                                <div className="px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600">
+                                   {taskRecord.status}
                                 </div>
-                                {!isStarted ? (
-                                  <button 
-                                    onClick={() => startOrderProduction(order.id)}
-                                    className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2"
-                                  >
-                                    <Play size={14} fill="currentColor" /> Start Production
-                                  </button>
-                                ) : (
-                                  <div className="w-48 bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                                     <div className="h-full bg-emerald-500 transition-all duration-1000" style={{width: `${progress}%`}}></div>
-                                  </div>
-                                )}
+                                <div className="w-48 bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                                   <div className="h-full bg-emerald-500 transition-all duration-1000" style={{width: `${progress}%`}}></div>
+                                </div>
                              </div>
                           </div>
 
-                          {/* Middle Row: Items */}
-                          <div className="px-8 mb-8 flex flex-wrap gap-2">
-                             {order.line_items.map((item, idx) => (
-                               <span key={idx} className="bg-slate-50 text-slate-500 px-3 py-1 rounded-lg text-[10px] font-bold border border-slate-100">{item.product.name} x{item.quantity}</span>
-                             ))}
-                          </div>
-
-                          {/* Bottom Row: Assembly Stages */}
-                          <div className={`p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity duration-500 ${!isStarted ? 'opacity-30 pointer-events-none grayscale' : 'opacity-100'}`}>
-                             {tasks.map(task => (
-                               <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.is_complete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100 hover:border-blue-200'}`}>
-                                  <div className="flex items-center gap-3 mb-4">
-                                     <button 
-                                       onClick={() => toggleDbTask(order.id, task.id)}
-                                       className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${task.is_complete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-transparent border border-slate-200'}`}
-                                     >
+                          <div className="p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                             {taskRecord.tasks.map((task) => (
+                               <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.isComplete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100'}`}>
+                                  <div className="flex items-center gap-3 mb-3">
+                                     <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${task.isComplete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-transparent border border-slate-200'}`}>
                                        <Check size={14} strokeWidth={4} />
-                                     </button>
-                                     <span className={`text-[11px] font-black ${task.is_complete ? 'text-emerald-600 line-through' : 'text-slate-700'}`}>{task.task_name}</span>
-                                  </div>
-                                  
-                                  {/* Task Controls - Shown when in process */}
-                                  <div className="space-y-3">
-                                     <input 
-                                       type="text" 
-                                       placeholder="Notes..." 
-                                       value={task.notes || ''} 
-                                       onChange={e => updateDbTaskNotes(order.id, task.id, e.target.value)}
-                                       className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[9px] font-bold outline-none focus:ring-1 focus:ring-blue-100" 
-                                     />
-                                     <div className="flex items-center justify-between">
-                                        <span className="text-[8px] font-black text-slate-300 uppercase">Worker Init</span>
-                                        <input 
-                                          type="text" 
-                                          maxLength={3} 
-                                          value={task.signed_by} 
-                                          onChange={e => updateDbTaskSignature(order.id, task.id, e.target.value)}
-                                          placeholder="..." 
-                                          className="w-10 bg-white border border-slate-200 rounded-lg py-1.5 text-[9px] font-black text-center uppercase outline-none focus:border-blue-400" 
-                                        />
                                      </div>
+                                     <span className={`text-[11px] font-black ${task.isComplete ? 'text-emerald-600 line-through' : 'text-slate-700'}`}>{task.taskName}</span>
                                   </div>
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{task.taskType}</p>
                                </div>
                              ))}
                           </div>
                        </div>
-                     )
+                     );
                    })
                  )}
                </div>
@@ -2846,20 +2953,85 @@ const App: React.FC = () => {
           )}
 
           {activeView === 'Orders' && (
-            <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden animate-in fade-in duration-500">
-               <table className="w-full text-left">
-                  <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Order Ref</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer Profile</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Operational Status</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Quote Value</th></tr></thead>
+            <div className="space-y-8 animate-in fade-in duration-500">
+              {ordersLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading orders...
+                </p>
+              )}
+              {ordersError && (
+                <p className="text-sm font-bold text-red-500">
+                  {ordersError}
+                </p>
+              )}
+              <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
+                <table className="w-full text-left min-w-[1100px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b">
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Order Ref</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer Profile</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Payment</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Production</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Total</th>
+                    </tr>
+                  </thead>
                   <tbody className="divide-y">
-                     {dbOrders.filter(o => !currentUser?.storeId || o.store_id === currentUser.storeId).map(o => (
-                       <tr key={o.id} onClick={() => openOrderDrilldown(o.id)} className="hover:bg-blue-50/40 cursor-pointer transition-all">
-                          <td className="px-8 py-6 text-sm font-black">#{o.order_no}<span className="block text-[10px] text-slate-400 font-medium">{o.date}</span></td>
-                          <td className="px-8 py-6 text-sm font-bold text-slate-700">{o.client_info.name}</td>
-                          <td className="px-8 py-6"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${o.status === OrderStatus.Completed ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>{o.status}</span></td>
-                          <td className="px-8 py-6 text-right font-black text-blue-600 text-sm">${o.line_items.reduce((a,b)=>a+(b.product.base_price*b.quantity),0).toFixed(2)}</td>
-                       </tr>
-                     ))}
+                    {firestoreOrders
+                      .filter((order) => !currentUser?.storeId || order.storeId === currentUser.storeId)
+                      .map((order) => (
+                        <tr key={order.id} className="hover:bg-blue-50/40 transition-all">
+                          <td className="px-8 py-6 text-sm font-black">
+                            {order.orderNumber}
+                            <span className="block text-[10px] text-slate-400 font-medium">{order.orderDate}</span>
+                          </td>
+                          <td className="px-8 py-6 text-sm font-bold text-slate-700">{order.customerName}</td>
+                          <td className="px-8 py-6">
+                            <select
+                              value={order.status}
+                              onChange={(e) => handleOrderStatusChange(order.id, e.target.value as OrderStatusV2)}
+                              className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                            >
+                              {['Pending', 'In Process', 'Quality Check', 'Ready', 'Completed', 'Cancelled'].map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-8 py-6">
+                            <select
+                              value={order.paymentStatus}
+                              onChange={(e) => handlePaymentStatusChange(order.id, e.target.value as PaymentStatus)}
+                              className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                            >
+                              {['Unpaid', 'Deposit Paid', 'Paid', 'Refunded'].map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-8 py-6">
+                            <select
+                              value={order.productionStatus}
+                              onChange={(e) => handleProductionStatusChange(order.id, e.target.value as ProductionStatus)}
+                              className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                            >
+                              {['Not Started', 'In Production', 'Quality Check', 'Ready', 'Completed'].map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-8 py-6 text-right font-black text-blue-600 text-sm">${order.total.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    {firestoreOrders.length === 0 && !ordersLoading && (
+                      <tr>
+                        <td colSpan={6} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                          No live orders yet. Convert an accepted quote to create the first order.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
-               </table>
+                </table>
+              </div>
             </div>
           )}
 
