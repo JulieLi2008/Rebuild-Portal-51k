@@ -95,3 +95,49 @@ export interface StoreInfo {
   createdAt?: string;
   updatedAt?: string;
 }
+
+export type LeadStatus =
+  | 'New'
+  | 'Contacted'
+  | 'Measure Scheduled'
+  | 'Quoted'
+  | 'Won'
+  | 'Lost';
+
+export interface Customer {
+  id: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  email: string;
+  phone: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  source?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface Lead {
+  id: string;
+  customerId: string;
+  customerName: string;
+  email: string;
+  phone: string;
+  projectAddress: string;
+  projectType: string;
+  source: string;
+  status: LeadStatus;
+  budget?: string;
+  timeline?: string;
+  notes?: string;
+  assignedStoreId?: string;
+  assignedManager?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}

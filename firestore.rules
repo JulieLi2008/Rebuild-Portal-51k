@@ -48,6 +48,14 @@ service cloud.firestore {
       allow write: if isAdmin() || isManager();
     }
 
+    match /customers/{customerId} {
+      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+    }
+
+    match /leads/{leadId} {
+      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

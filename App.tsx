@@ -13,6 +13,7 @@ import {
   ListTodo,
   Layers,
   User,
+  Users,
   ShieldCheck,
   ShoppingCart,
   Building2,
@@ -51,7 +52,10 @@ import {
   UserProfile, 
   UserRole,
   ProductionTasks,
-  TaskItem
+  TaskItem,
+  Customer,
+  Lead,
+  LeadStatus
 } from './types';
 import { 
   INITIAL_USERS, 
@@ -63,6 +67,12 @@ import { loginWithEmail, logoutUser, listenToAuthState, getUserProfile } from '.
 import { getRoles, saveRole, updateRolePermissions, deleteRole, RoleRecord } from './services/roleService';
 import { getStores, saveStore, deleteStore } from './services/storeService';
 import { getProducts, saveProduct, deleteProduct } from './services/productService';
+import {
+  createCustomerAndLead,
+  getCustomers,
+  getLeads,
+  updateLeadStatus,
+} from './services/customerLeadService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -191,6 +201,30 @@ const App: React.FC = () => {
   const [dbProducts, setDbProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState('');
+  const [dbCustomers, setDbCustomers] = useState<Customer[]>([]);
+  const [dbLeads, setDbLeads] = useState<Lead[]>([]);
+  const [customerLeadLoading, setCustomerLeadLoading] = useState(false);
+  const [customerLeadError, setCustomerLeadError] = useState('');
+  const [showLeadModal, setShowLeadModal] = useState(false);
+  const [leadStatusFilter, setLeadStatusFilter] = useState<LeadStatus | 'All'>('All');
+  const [newLeadData, setNewLeadData] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    customerAddress: '',
+    city: '',
+    province: 'ON',
+    postalCode: '',
+    projectAddress: '',
+    projectType: 'Kitchen Cabinet',
+    source: 'info@51wood.ca',
+    status: 'New' as LeadStatus,
+    budget: '',
+    timeline: '',
+    notes: '',
+    assignedStoreId: '',
+  });
   const [dbOrders, setDbOrders] = useState<Order[]>(mockDatabase.orders as Order[]);
   const [dbProductionTasks, setDbProductionTasks] = useState<ProductionTasks[]>(mockDatabase.productionTasks);
   const [dbRoles, setDbRoles] = useState<RoleRecord[]>([]);
@@ -260,6 +294,26 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadCustomersAndLeads = useCallback(async () => {
+    setCustomerLeadLoading(true);
+    setCustomerLeadError('');
+
+    try {
+      const [customers, leads] = await Promise.all([
+        getCustomers(),
+        getLeads(),
+      ]);
+
+      setDbCustomers(customers);
+      setDbLeads(leads);
+    } catch (err) {
+      console.error('Failed to load customers/leads:', err);
+      setCustomerLeadError('Could not load customers and leads from Firebase.');
+    } finally {
+      setCustomerLeadLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -295,6 +349,7 @@ const App: React.FC = () => {
         await loadRoles();
         await loadStores();
         await loadProducts();
+        await loadCustomersAndLeads();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -305,7 +360,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores, loadProducts]);
+  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -351,6 +406,15 @@ const App: React.FC = () => {
       }));
     }
   }, [dbStores, currentUser?.storeId]);
+
+  useEffect(() => {
+    if (!newLeadData.assignedStoreId && dbStores.length > 0) {
+      setNewLeadData((prev) => ({
+        ...prev,
+        assignedStoreId: dbStores[0].id,
+      }));
+    }
+  }, [dbStores, newLeadData.assignedStoreId]);
 
   // --- Quote Builder Step 2 New States ---
   const [globalDimensions, setGlobalDimensions] = useState({
@@ -424,6 +488,7 @@ const App: React.FC = () => {
     await loadRoles();
     await loadStores();
     await loadProducts();
+    await loadCustomersAndLeads();
   };
 
   const handleLogout = async () => {
@@ -594,6 +659,65 @@ const App: React.FC = () => {
     } catch (err) {
       console.error('Failed to save product:', err);
       alert('Could not save product. Please try again.');
+    }
+  };
+
+  const handleCreateLead = async () => {
+    if (!newLeadData.firstName || !newLeadData.lastName || !newLeadData.phone || !newLeadData.projectAddress) {
+      alert('First name, last name, phone, and project address are required.');
+      return;
+    }
+
+    const assignedStore = dbStores.find((store) => store.id === newLeadData.assignedStoreId);
+
+    try {
+      await createCustomerAndLead({
+        ...newLeadData,
+        assignedManager: assignedStore?.manager_name || '',
+        createdBy: currentUser?.id || '',
+      });
+
+      await loadCustomersAndLeads();
+
+      setNewLeadData({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        customerAddress: '',
+        city: '',
+        province: 'ON',
+        postalCode: '',
+        projectAddress: '',
+        projectType: 'Kitchen Cabinet',
+        source: 'info@51wood.ca',
+        status: 'New',
+        budget: '',
+        timeline: '',
+        notes: '',
+        assignedStoreId: dbStores[0]?.id || '',
+      });
+
+      setShowLeadModal(false);
+    } catch (err) {
+      console.error('Failed to create lead:', err);
+      alert('Could not create lead. Please try again.');
+    }
+  };
+
+  const handleLeadStatusChange = async (leadId: string, status: LeadStatus) => {
+    setDbLeads((prev) =>
+      prev.map((lead) =>
+        lead.id === leadId ? { ...lead, status } : lead
+      )
+    );
+
+    try {
+      await updateLeadStatus(leadId, status);
+    } catch (err) {
+      console.error('Failed to update lead status:', err);
+      alert('Could not update lead status. Please refresh and try again.');
+      await loadCustomersAndLeads();
     }
   };
 
@@ -836,6 +960,13 @@ const App: React.FC = () => {
     });
   }, [dbOrders, tmFilter, currentUser]);
 
+  const filteredLeads = useMemo(() => {
+    return dbLeads.filter((lead) => {
+      if (leadStatusFilter === 'All') return true;
+      return lead.status === leadStatusFilter;
+    });
+  }, [dbLeads, leadStatusFilter]);
+
   // View Handlers
   const openOrderDrilldown = (id: string) => {
     setActiveView('TaskManager');
@@ -866,7 +997,7 @@ const App: React.FC = () => {
 
   // Sidebar Group Visibility
   const showExecutive = currentUser?.role === 'SuperAdmin';
-  const showSales = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager';
+  const showSales = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager' || currentUser?.role === 'Sales';
   const showDashboard = currentUser?.role !== 'Worker';
 
   // Dashboard Title
@@ -964,7 +1095,7 @@ const App: React.FC = () => {
             <div>
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">SALES</p>
               <div className="space-y-1">
-                {[{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
+                {[{id:'CustomersLeads',label:'Customers / Leads',icon:Users},{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
                   <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
@@ -1083,6 +1214,203 @@ const App: React.FC = () => {
                    </div>
                    <Activity size={200} className="absolute -bottom-10 -right-10 text-white/5" />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeView === 'CustomersLeads' && (
+            <div className="space-y-8 animate-in fade-in duration-500">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black uppercase tracking-widest">Customers / Leads</h3>
+                <button
+                  onClick={() => setShowLeadModal(true)}
+                  className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase shadow-lg shadow-blue-100"
+                >
+                  <Plus size={14} className="inline mr-2" /> New Lead
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {(['All', 'New', 'Contacted', 'Measure Scheduled', 'Quoted', 'Won', 'Lost'] as const).map((status) => (
+                  <button
+                    key={status}
+                    onClick={() => setLeadStatusFilter(status)}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                      leadStatusFilter === status
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-100'
+                        : 'bg-white text-slate-400 border border-slate-200 hover:text-blue-600'
+                    }`}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              {customerLeadLoading && (
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Loading customers and leads...
+                </p>
+              )}
+
+              {customerLeadError && (
+                <p className="text-sm font-bold text-red-500">
+                  {customerLeadError}
+                </p>
+              )}
+
+              {showLeadModal && (
+                <div className="bg-white p-10 rounded-[40px] border border-blue-200 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                  <div className="md:col-span-2 flex justify-between items-center">
+                    <h4 className="font-black uppercase text-xs">New Lead from info@51wood.ca</h4>
+                    <button onClick={() => setShowLeadModal(false)}><X size={18} /></button>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">First Name *</label>
+                    <input type="text" value={newLeadData.firstName} onChange={(e) => setNewLeadData({ ...newLeadData, firstName: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Last Name *</label>
+                    <input type="text" value={newLeadData.lastName} onChange={(e) => setNewLeadData({ ...newLeadData, lastName: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Phone *</label>
+                    <input type="text" value={newLeadData.phone} onChange={(e) => setNewLeadData({ ...newLeadData, phone: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Email</label>
+                    <input type="email" value={newLeadData.email} onChange={(e) => setNewLeadData({ ...newLeadData, email: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Customer Address</label>
+                    <input type="text" value={newLeadData.customerAddress} onChange={(e) => setNewLeadData({ ...newLeadData, customerAddress: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">City</label>
+                    <input type="text" value={newLeadData.city} onChange={(e) => setNewLeadData({ ...newLeadData, city: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Province</label>
+                    <input type="text" value={newLeadData.province} onChange={(e) => setNewLeadData({ ...newLeadData, province: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Postal Code</label>
+                    <input type="text" value={newLeadData.postalCode} onChange={(e) => setNewLeadData({ ...newLeadData, postalCode: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Assigned Store *</label>
+                    <select
+                      value={newLeadData.assignedStoreId}
+                      onChange={(e) => setNewLeadData({ ...newLeadData, assignedStoreId: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {dbStores.map((store) => (
+                        <option key={store.id} value={store.id}>
+                          {store.store_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Project Address *</label>
+                    <input type="text" value={newLeadData.projectAddress} onChange={(e) => setNewLeadData({ ...newLeadData, projectAddress: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Project Type</label>
+                    <select
+                      value={newLeadData.projectType}
+                      onChange={(e) => setNewLeadData({ ...newLeadData, projectType: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {['Kitchen Cabinet', 'Bathroom Vanity', 'Closet', 'Custom Millwork', 'Countertop', 'Repair / Service', 'Other'].map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Source</label>
+                    <select
+                      value={newLeadData.source}
+                      onChange={(e) => setNewLeadData({ ...newLeadData, source: e.target.value })}
+                      className="w-full bg-slate-50 border p-3 rounded-xl outline-none"
+                    >
+                      {['info@51wood.ca', 'Phone Call', 'Walk-in', 'Referral', 'Website', 'Other'].map((source) => (
+                        <option key={source} value={source}>{source}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Budget</label>
+                    <input type="text" value={newLeadData.budget} onChange={(e) => setNewLeadData({ ...newLeadData, budget: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Timeline</label>
+                    <input type="text" value={newLeadData.timeline} onChange={(e) => setNewLeadData({ ...newLeadData, timeline: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none" />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase">Notes</label>
+                    <textarea value={newLeadData.notes} onChange={(e) => setNewLeadData({ ...newLeadData, notes: e.target.value })} className="w-full bg-slate-50 border p-3 rounded-xl outline-none min-h-[90px]" />
+                  </div>
+                  <div className="md:col-span-2 flex justify-end gap-3 mt-4">
+                    <button onClick={() => setShowLeadModal(false)} className="px-6 font-bold text-xs">Cancel</button>
+                    <button onClick={handleCreateLead} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase">Save Lead</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide">
+                <table className="w-full text-left min-w-[1100px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b">
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Phone</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Email</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Project</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Source</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Manager</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filteredLeads.map((lead) => (
+                      <tr key={lead.id} className="hover:bg-slate-50/50">
+                        <td className="px-8 py-6">
+                          <p className="text-sm font-black">{lead.customerName}</p>
+                          {lead.notes && <p className="text-[10px] text-slate-400 mt-1 max-w-xs truncate">{lead.notes}</p>}
+                        </td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.phone}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.email || '—'}</td>
+                        <td className="px-8 py-6">
+                          <p className="text-xs font-black uppercase text-slate-500">{lead.projectType}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">{lead.projectAddress}</p>
+                        </td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.source}</td>
+                        <td className="px-8 py-6">
+                          <select
+                            value={lead.status}
+                            onChange={(e) => handleLeadStatusChange(lead.id, e.target.value as LeadStatus)}
+                            className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                          >
+                            {['New', 'Contacted', 'Measure Scheduled', 'Quoted', 'Won', 'Lost'].map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.assignedManager || '—'}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">
+                          {lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredLeads.length === 0 && !customerLeadLoading && (
+                      <tr>
+                        <td colSpan={8} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                          No leads found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
