@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+scripts/demoUserUids.json
+scripts/serviceAccount.local.json
+**/serviceAccount*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

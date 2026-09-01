@@ -236,6 +236,29 @@ const EMPLOYMENT_TYPES: EmploymentType[] = [
   'Other',
 ];
 
+const TASK_FOCUSED_ROLES = [
+  'Worker',
+  'Cabinet Maker',
+  'Installer',
+  'Installer Helper',
+  'Subcontractor',
+  'Countertop Subcontractor',
+];
+
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  view_catalog: ['view_catalog', 'view_products'],
+  view_production_tasks: ['view_production_tasks', 'view_tasks', 'Order Tasks'],
+  view_all_orders: ['view_all_orders', 'All Orders'],
+  view_store_orders: ['view_store_orders', 'Store Orders'],
+  view_payment: ['view_payment', 'Payment'],
+  view_credit: ['view_credit', 'Credit'],
+  view_drawings: ['view_drawings', 'Drawing'],
+  upload_files: ['upload_files', 'Upload'],
+  view_customer_phone: ['view_customer_phone', 'Phone', 'Cell'],
+  view_customer_email: ['view_customer_email', 'Email'],
+  view_customer_address: ['view_customer_address', 'Address'],
+};
+
 const App: React.FC = () => {
   // --- Central Data Store ---
   const [dbStores, setDbStores] = useState<StoreInfo[]>([]);
@@ -441,7 +464,7 @@ const App: React.FC = () => {
 
         setCurrentUser(profile);
 
-        if (profile.role === 'Worker') {
+        if (TASK_FOCUSED_ROLES.includes(profile.role)) {
           setActiveView('TaskManager');
         } else {
           setActiveView('Dashboard');
@@ -592,11 +615,20 @@ const App: React.FC = () => {
     return dbRoles.find(r => r.name === currentUser.role)?.permissions || {};
   }, [currentUser, dbRoles]);
 
+  const hasPermission = (permission: string) => {
+    if (!currentUserRolePermissions) return false;
+    if (currentUser?.role === 'SuperAdmin') return true;
+    if (currentUserRolePermissions[permission] === true) return true;
+
+    const aliases = PERMISSION_ALIASES[permission] || [permission];
+    return aliases.some((key) => currentUserRolePermissions[key] === true);
+  };
+
   const canAccess = (roles: UserRole[]) => currentUser && roles.includes(currentUser.role);
 
   const handleLogin = async (user: UserProfile) => {
     setCurrentUser(user);
-    if (user.role === 'Worker') {
+    if (TASK_FOCUSED_ROLES.includes(user.role)) {
       setActiveView('TaskManager');
     } else {
       setActiveView('Dashboard');
@@ -1354,19 +1386,25 @@ const App: React.FC = () => {
   );
 
   // --- Master Key Logic for Data Center ---
-  const canViewDataCenter = useMemo(() => {
-    if (!currentUser) return false;
-    const isSuperUser = currentUser.role === 'SuperAdmin' || currentUser.role === 'Executive' || currentUser.role.toLowerCase().includes('admin');
-    const hasExplicitPermission = currentUserRolePermissions && currentUserRolePermissions['view_data_center'];
-    return isSuperUser || hasExplicitPermission;
-  }, [currentUser, currentUserRolePermissions]);
+  const canViewDataCenter = hasPermission('view_data_center');
 
-  // Sidebar Group Visibility
-  const showExecutive = currentUser?.role === 'SuperAdmin';
-  const showSales = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager' || currentUser?.role === 'Sales';
-  const showDashboard = currentUser?.role !== 'Worker';
-  const showHRLabor = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager' || currentUser?.role === 'Accounting';
-  const canEditHRLabor = currentUser?.role === 'SuperAdmin' || currentUser?.role === 'Manager';
+  const showDashboard = hasPermission('view_dashboard');
+  const showAccessControl = hasPermission('manage_roles');
+  const showStores = hasPermission('view_stores');
+  const showCustomersLeads = hasPermission('view_customers') || hasPermission('view_leads');
+  const showQuoteBuilder = hasPermission('create_quotes');
+  const showQuotes = hasPermission('view_quotes');
+  const showOrders = hasPermission('view_orders');
+  const showHRLabor = hasPermission('view_hr_labor');
+  const canCreateHRLabor = hasPermission('create_team_members');
+  const canEditHRLabor = hasPermission('edit_team_members');
+  const canDeleteHRLabor = hasPermission('delete_team_members');
+  const showTaskManager = hasPermission('view_production_tasks');
+  const showInventory = hasPermission('view_inventory');
+  const showCatalog = hasPermission('view_catalog');
+  const showExecutive = showAccessControl || showStores || canViewDataCenter;
+  const showSales = showCustomersLeads || showQuoteBuilder || showQuotes || showOrders;
+  const showProduction = showTaskManager || showInventory || showCatalog;
 
   // Dashboard Title
   const userStoreName = dbStores.find(s => s.id === currentUser?.storeId)?.store_name;
@@ -1450,7 +1488,11 @@ const App: React.FC = () => {
             <div>
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">EXECUTIVE</p>
               <div className="space-y-1">
-                {[{id:'Users',label:'Access Control',icon:ShieldCheck},{id:'Stores',label:'Store Network',icon:Building2},{id:'DataCenter',label:'Data Center',icon:Database}].map(item => (
+                {[
+                  showAccessControl && {id:'Users',label:'Access Control',icon:ShieldCheck},
+                  showStores && {id:'Stores',label:'Store Network',icon:Building2},
+                  canViewDataCenter && {id:'DataCenter',label:'Data Center',icon:Database},
+                ].filter(Boolean).map(item => (
                   <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
@@ -1463,7 +1505,12 @@ const App: React.FC = () => {
             <div>
               <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">SALES</p>
               <div className="space-y-1">
-                {[{id:'CustomersLeads',label:'Customers / Leads',icon:Users},{id:'Quote',label:'Quote Builder',icon:FilePlus},{id:'Quotes',label:'Quotes',icon:FileText},{id:'Orders',label:'Orders',icon:ClipboardList}].map(item => (
+                {[
+                  showCustomersLeads && {id:'CustomersLeads',label:'Customers / Leads',icon:Users},
+                  showQuoteBuilder && {id:'Quote',label:'Quote Builder',icon:FilePlus},
+                  showQuotes && {id:'Quotes',label:'Quotes',icon:FileText},
+                  showOrders && {id:'Orders',label:'Orders',icon:ClipboardList},
+                ].filter(Boolean).map(item => (
                   <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
@@ -1483,16 +1530,22 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <div>
-            <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">PRODUCTION</p>
-            <div className="space-y-1">
-              {[{id:'TaskManager',label:'Task Manager',icon:ListTodo},{id:'Inventory',label:'Inventory',icon:Warehouse},{id:'Catalog',label:'Master Catalog',icon:Package}].map(item => (
-                <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
-                  <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
-                </button>
-              ))}
+          {showProduction && (
+            <div>
+              <p className="px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">PRODUCTION</p>
+              <div className="space-y-1">
+                {[
+                  showTaskManager && {id:'TaskManager',label:'Task Manager',icon:ListTodo},
+                  showInventory && {id:'Inventory',label:'Inventory',icon:Warehouse},
+                  showCatalog && {id:'Catalog',label:'Master Catalog',icon:Package},
+                ].filter(Boolean).map(item => (
+                  <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                    <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </nav>
         <div className="pt-6 border-t border-slate-200">
           <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 transition-all font-black text-xs uppercase"><LogOut size={18} /> Logout</button>
@@ -1757,11 +1810,11 @@ const App: React.FC = () => {
                           <p className="text-sm font-black">{lead.customerName}</p>
                           {lead.notes && <p className="text-[10px] text-slate-400 mt-1 max-w-xs truncate">{lead.notes}</p>}
                         </td>
-                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.phone}</td>
-                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.email || '—'}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{hasPermission('view_customer_phone') ? lead.phone : 'Restricted'}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{hasPermission('view_customer_email') ? (lead.email || '—') : 'Restricted'}</td>
                         <td className="px-8 py-6">
                           <p className="text-xs font-black uppercase text-slate-500">{lead.projectType}</p>
-                          <p className="text-[10px] text-slate-400 mt-1">{lead.projectAddress}</p>
+                          <p className="text-[10px] text-slate-400 mt-1">{hasPermission('view_customer_address') ? lead.projectAddress : 'Restricted'}</p>
                         </td>
                         <td className="px-8 py-6 text-xs font-bold text-slate-500">{lead.source}</td>
                         <td className="px-8 py-6">
@@ -2038,8 +2091,8 @@ const App: React.FC = () => {
                       <tr key={quote.id} className="hover:bg-slate-50/50">
                         <td className="px-8 py-6 text-sm font-black">{quote.quoteNumber}</td>
                         <td className="px-8 py-6 text-sm font-black">{quote.customerName}</td>
-                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{quote.customerPhone}</td>
-                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{quote.projectAddress}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{hasPermission('view_customer_phone') ? quote.customerPhone : 'Restricted'}</td>
+                        <td className="px-8 py-6 text-xs font-bold text-slate-500">{hasPermission('view_customer_address') ? quote.projectAddress : 'Restricted'}</td>
                         <td className="px-8 py-6">
                           <select
                             value={quote.status}
@@ -2074,7 +2127,7 @@ const App: React.FC = () => {
             <div className="space-y-8 animate-in fade-in duration-500">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-black uppercase tracking-widest">HR / Labor Management</h3>
-                {canEditHRLabor && (
+                {canCreateHRLabor && (
                   <button
                     onClick={() => {
                       resetTeamMemberForm();
@@ -2115,7 +2168,7 @@ const App: React.FC = () => {
                 </p>
               )}
 
-              {showTeamMemberModal && canEditHRLabor && (
+              {showTeamMemberModal && (canCreateHRLabor || canEditHRLabor) && (
                 <div className="bg-white p-10 rounded-[40px] border border-blue-200 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                   <div className="md:col-span-2 flex justify-between items-center">
                     <h4 className="font-black uppercase text-xs">
@@ -2403,7 +2456,7 @@ const App: React.FC = () => {
                             </span>
                           </td>
                           <td className="px-8 py-6 text-xs font-black text-blue-600">
-                            {getTeamMemberRateLabel(member)}
+                            {hasPermission('view_labor_rate') ? getTeamMemberRateLabel(member) : 'Restricted'}
                           </td>
                           <td className="px-8 py-6">
                             {canEditHRLabor ? (
@@ -2430,12 +2483,14 @@ const App: React.FC = () => {
                                 >
                                   <Edit3 size={14} />
                                 </button>
-                                <button
-                                  onClick={() => handleDeleteTeamMember(member.id)}
-                                  className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
+                                {canDeleteHRLabor && (
+                                  <button
+                                    onClick={() => handleDeleteTeamMember(member.id)}
+                                    className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           )}
@@ -2616,7 +2671,7 @@ const App: React.FC = () => {
                        <tr className="border-b">
                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase sticky left-0 bg-slate-50 z-20">Role Identifier</th>
                          {PERMISSION_COLUMNS.map(c => (
-                           <th key={c} className="px-4 py-5 text-[9px] text-center uppercase text-slate-400 border-l border-slate-100">{c}</th>
+                           <th key={c} className="px-3 py-5 text-[8px] text-center uppercase text-slate-400 border-l border-slate-100 max-w-[80px] leading-tight">{c.replace(/_/g, ' ')}</th>
                          ))}
                          <th className="px-8 py-5 text-right uppercase text-slate-400 text-[10px] border-l border-slate-100">Actions</th>
                        </tr>

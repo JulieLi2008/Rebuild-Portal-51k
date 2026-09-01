@@ -12,7 +12,9 @@
     "seed:products": "tsx --env-file=.env.local scripts/seedProducts.ts",
     "seed:sample-lead": "tsx --env-file=.env.local scripts/seedSampleLead.ts",
     "seed:sample-quote": "tsx --env-file=.env.local scripts/seedSampleQuote.ts",
-    "seed:team-members": "tsx --env-file=.env.local scripts/seedTeamMembers.ts"
+    "seed:team-members": "tsx --env-file=.env.local scripts/seedTeamMembers.ts",
+    "seed:demo-users": "tsx --env-file=.env.local scripts/seedDemoUsers.ts",
+    "create:demo-auth-users": "tsx scripts/createDemoAuthUsers.ts"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "firebase-admin": "^14.3.0",
     "tsx": "^4.23.13",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

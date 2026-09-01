@@ -28,6 +28,26 @@ service cloud.firestore {
       return isApproved() && role() == 'Manager';
     }
 
+    function isSales() {
+      return isApproved() && role() == 'Sales';
+    }
+
+    function isAccounting() {
+      return isApproved() && role() == 'Accounting';
+    }
+
+    function isWorkerRole() {
+      return isApproved() && role() in [
+        'Designer',
+        'Cabinet Maker',
+        'Installer',
+        'Installer Helper',
+        'Subcontractor',
+        'Countertop Subcontractor',
+        'Worker'
+      ];
+    }
+
     match /users/{userId} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow create, update, delete: if isAdmin();
@@ -49,20 +69,30 @@ service cloud.firestore {
     }
 
     match /customers/{customerId} {
-      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+      allow read, write: if isAdmin() || isManager() || isSales();
     }
 
     match /leads/{leadId} {
-      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+      allow read, write: if isAdmin() || isManager() || isSales();
     }
 
     match /quotes/{quoteId} {
-      allow read, write: if isAdmin() || isManager() || role() == 'Sales';
+      allow read, write: if isAdmin() || isManager() || isSales();
     }
 
     match /teamMembers/{memberId} {
-      allow read: if isAdmin() || isManager() || role() == 'Accounting';
+      allow read: if isAdmin() || isManager() || isAccounting();
       allow create, update, delete: if isAdmin() || isManager();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAdmin() || isManager() || isSales() || isAccounting() || isWorkerRole();
+      allow write: if isAdmin() || isManager();
+    }
+
+    match /productionTasks/{taskId} {
+      allow read: if isAdmin() || isManager() || isWorkerRole();
+      allow write: if isAdmin() || isManager() || isWorkerRole();
     }
 
     match /{document=**} {

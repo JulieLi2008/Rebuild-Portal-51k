@@ -100,48 +100,100 @@ export const mockDatabase = {
   // E. Roles (Access Control Extended Matrix)
   roles: [
     { 
-      id: 'R1', 
+      id: 'SuperAdmin', 
       name: 'SuperAdmin', 
-      permissions: { 
-        'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
-        'Drawing': true, 'Upload': true, 'Payment': true, 'Order': true, 'Credit': true,
-        'Comment': true, 'Review': true, 'Reviews': true,
-        'Store Orders': true, 'All Orders': true, 'Order Tasks': true,
-        'view_data_center': true, 'view_orders': true, 'view_products': true, 'view_stores': true, 'view_tasks': true
-      } 
+      permissions: {}
     },
     { 
-      id: 'R2', 
+      id: 'Manager', 
       name: 'Manager', 
-      permissions: { 
-        'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
-        'Drawing': true, 'Upload': true, 'Payment': false, 'Order': true, 'Credit': false,
-        'Comment': true, 'Review': true, 'Reviews': false,
-        'Store Orders': true, 'All Orders': false, 'Order Tasks': true,
-        'view_data_center': true, 'view_orders': true, 'view_products': true, 'view_stores': true, 'view_tasks': true
-      } 
+      permissions: {
+        view_dashboard: true,
+        view_customers: true,
+        create_customers: true,
+        edit_customers: true,
+        view_customer_phone: true,
+        view_customer_email: true,
+        view_customer_address: true,
+        view_leads: true,
+        create_leads: true,
+        edit_leads: true,
+        view_quotes: true,
+        create_quotes: true,
+        edit_quotes: true,
+        view_quote_price: true,
+        approve_quotes: true,
+        convert_quotes: true,
+        view_orders: true,
+        create_orders: true,
+        edit_orders: true,
+        view_store_orders: true,
+        view_order_payment: true,
+        view_production_tasks: true,
+        assign_tasks: true,
+        complete_tasks: true,
+        view_design_files: true,
+        view_drawings: true,
+        upload_files: true,
+        view_production_specs: true,
+        view_inventory: true,
+        edit_inventory: true,
+        view_catalog: true,
+        edit_catalog: true,
+        view_stores: true,
+        view_hr_labor: true,
+        create_team_members: true,
+        edit_team_members: true,
+        view_labor_rate: true,
+        view_reports: true,
+        run_ai_diagnostics: true
+      }
     },
     { 
-      id: 'R3', 
+      id: 'Sales', 
       name: 'Sales', 
-      permissions: { 
-        'Cell': true, 'Phone': true, 'Address': true, 'Email': true,
-        'Drawing': true, 'Upload': false, 'Payment': false, 'Order': true, 'Credit': false,
-        'Comment': true, 'Review': false, 'Reviews': false,
-        'Store Orders': true, 'All Orders': false, 'Order Tasks': false,
-        'view_data_center': false, 'view_orders': false, 'view_products': false, 'view_stores': false, 'view_tasks': false
-      } 
+      permissions: {
+        view_dashboard: true,
+        view_customers: true,
+        create_customers: true,
+        edit_customers: true,
+        view_customer_phone: true,
+        view_customer_email: true,
+        view_customer_address: true,
+        view_leads: true,
+        create_leads: true,
+        edit_leads: true,
+        view_quotes: true,
+        create_quotes: true,
+        edit_quotes: true,
+        view_quote_price: true,
+        view_orders: true,
+        view_store_orders: true,
+        view_catalog: true
+      }
     },
     { 
-      id: 'R4', 
+      id: 'Accounting', 
       name: 'Accounting', 
-      permissions: { 
-        'Cell': false, 'Phone': false, 'Address': false, 'Email': true,
-        'Drawing': false, 'Upload': false, 'Payment': true, 'Order': true, 'Credit': true,
-        'Comment': false, 'Review': false, 'Reviews': false,
-        'Store Orders': false, 'All Orders': true, 'Order Tasks': false,
-        'view_data_center': true, 'view_orders': true, 'view_products': false, 'view_stores': false, 'view_tasks': false
-      } 
+      permissions: {
+        view_dashboard: true,
+        view_customers: true,
+        view_customer_email: true,
+        view_quotes: true,
+        view_quote_price: true,
+        view_orders: true,
+        view_all_orders: true,
+        view_order_payment: true,
+        view_hr_labor: true,
+        view_labor_rate: true,
+        view_payroll: true,
+        view_accounting: true,
+        view_payment: true,
+        edit_payment: true,
+        view_credit: true,
+        edit_credit: true,
+        view_reports: true
+      }
     }
   ]
 };
@@ -155,14 +207,75 @@ export const INITIAL_USERS = [
 
 export const ASSEMBLY_TASKS = ['Board Cutting', 'Edgebanding', 'Drilling', 'Assembly', 'Packing', 'Logistics Out'];
 
-// Extended Matrix headers
 export const PERMISSION_COLUMNS = [
-  'Cell', 'Phone', 'Address', 'Email', 
-  'Drawing', 'Upload', 'Payment', 'Order', 'Credit', 
-  'Comment', 'Review', 'Reviews', 
-  'Store Orders', 'All Orders', 'Order Tasks',
-  'view_data_center', 'view_orders', 'view_products', 'view_stores', 'view_tasks'
+  'view_dashboard',
+
+  'view_customers',
+  'create_customers',
+  'edit_customers',
+  'view_customer_phone',
+  'view_customer_email',
+  'view_customer_address',
+
+  'view_leads',
+  'create_leads',
+  'edit_leads',
+
+  'view_quotes',
+  'create_quotes',
+  'edit_quotes',
+  'view_quote_price',
+  'approve_quotes',
+  'convert_quotes',
+
+  'view_orders',
+  'create_orders',
+  'edit_orders',
+  'view_all_orders',
+  'view_store_orders',
+  'view_order_payment',
+
+  'view_production_tasks',
+  'assign_tasks',
+  'complete_tasks',
+  'view_design_files',
+  'view_drawings',
+  'upload_files',
+  'view_production_specs',
+
+  'view_inventory',
+  'edit_inventory',
+  'view_catalog',
+  'edit_catalog',
+
+  'view_stores',
+  'edit_stores',
+  'view_data_center',
+
+  'view_hr_labor',
+  'create_team_members',
+  'edit_team_members',
+  'delete_team_members',
+  'view_labor_rate',
+  'edit_labor_rate',
+  'view_payroll',
+  'approve_payroll',
+
+  'view_accounting',
+  'view_payment',
+  'edit_payment',
+  'view_credit',
+  'edit_credit',
+
+  'view_reports',
+  'run_ai_diagnostics',
+
+  'manage_roles',
+  'manage_users',
 ];
+
+mockDatabase.roles.find((role) => role.name === 'SuperAdmin').permissions =
+  Object.fromEntries(PERMISSION_COLUMNS.map((permission) => [permission, true]));
 
 export const WORKFLOW_STEPS = [
   { id: 'combo', label: 'Combo Selection' },
