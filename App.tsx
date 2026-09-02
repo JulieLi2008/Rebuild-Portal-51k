@@ -65,6 +65,7 @@ import {
   WorkerType,
   FirestoreOrder,
   FirestoreProductionTask,
+  FirestoreTaskItem,
   OrderStatusV2,
   PaymentStatus,
   ProductionStatus,
@@ -104,6 +105,7 @@ import {
   updateOrderStatus,
   updatePaymentStatus,
   updateProductionStatus,
+  updateProductionTaskItems,
 } from './services/orderService';
 
 /**
@@ -1252,6 +1254,141 @@ const App: React.FC = () => {
     }
   };
 
+  const getAssignableTeamMembers = (taskType: string) => {
+    return dbTeamMembers.filter((member) => {
+      if (member.status !== 'Active') return false;
+
+      if (taskType === 'Design') {
+        return member.workerType === 'Designer';
+      }
+
+      if (taskType === 'Production') {
+        return (
+          member.workerType === 'Cabinet Maker' ||
+          member.workerType === 'Subcontractor'
+        );
+      }
+
+      if (taskType === 'Installation') {
+        return (
+          member.workerType === 'Installer' ||
+          member.workerType === 'Installer Helper' ||
+          member.workerType === 'Subcontractor'
+        );
+      }
+
+      if (taskType === 'Quality') {
+        return (
+          member.workerType === 'Manager' ||
+          member.workerType === 'Cabinet Maker'
+        );
+      }
+
+      if (taskType === 'Logistics') {
+        return (
+          member.workerType === 'Installer' ||
+          member.workerType === 'Installer Helper'
+        );
+      }
+
+      return true;
+    });
+  };
+
+  const handleUpdateProductionTaskItem = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItemId: string,
+    changes: Partial<FirestoreTaskItem>
+  ) => {
+    const productionTask = firestoreProductionTasks.find(
+      (item) => item.id === productionTaskId
+    );
+
+    if (!productionTask) return;
+
+    const nextTasks = productionTask.tasks.map((task) => {
+      if (task.id !== taskItemId) return task;
+
+      const nextTask = {
+        ...task,
+        ...changes,
+      };
+
+      if (changes.isComplete === true && !task.completedAt) {
+        nextTask.completedAt = new Date().toISOString();
+      }
+
+      if (changes.isComplete === false) {
+        nextTask.completedAt = '';
+      }
+
+      return nextTask;
+    });
+
+    setFirestoreProductionTasks((prev) =>
+      prev.map((item) =>
+        item.id === productionTaskId
+          ? { ...item, tasks: nextTasks }
+          : item
+      )
+    );
+
+    try {
+      await updateProductionTaskItems({
+        productionTaskId,
+        orderId,
+        tasks: nextTasks,
+      });
+
+      await loadOrdersAndTasks();
+    } catch (err) {
+      console.error('Failed to update production task:', err);
+      alert('Could not update production task. Please refresh and try again.');
+      await loadOrdersAndTasks();
+    }
+  };
+
+  const handleAssignTask = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItem: FirestoreTaskItem,
+    teamMemberId: string
+  ) => {
+    const assignedMember = dbTeamMembers.find(
+      (member) => member.id === teamMemberId
+    );
+
+    await handleUpdateProductionTaskItem(
+      productionTaskId,
+      orderId,
+      taskItem.id,
+      {
+        assignedTeamMemberId: assignedMember?.id || '',
+        assignedTeamMemberName: assignedMember?.displayName || '',
+      }
+    );
+  };
+
+  const handleDraftProductionTaskItem = (
+    productionTaskId: string,
+    taskItemId: string,
+    changes: Partial<FirestoreTaskItem>
+  ) => {
+    setFirestoreProductionTasks((prev) =>
+      prev.map((item) =>
+        item.id === productionTaskId
+          ? {
+              ...item,
+              tasks: item.tasks.map((task) =>
+                task.id === taskItemId ? { ...task, ...changes } : task
+              ),
+            }
+          : item
+      )
+    );
+  };
+
   const resetTeamMemberForm = () => {
     setEditingTeamMemberId(null);
     setNewTeamMemberData({
@@ -1532,6 +1669,14 @@ const App: React.FC = () => {
   const canEditHRLabor = hasPermission('edit_team_members');
   const canDeleteHRLabor = hasPermission('delete_team_members');
   const showTaskManager = hasPermission('view_production_tasks');
+  const canAssignProductionTasks =
+    currentUser?.role === 'SuperAdmin' ||
+    currentUser?.role === 'Manager' ||
+    hasPermission('assign_tasks');
+  const canCompleteProductionTasks =
+    currentUser?.role === 'SuperAdmin' ||
+    currentUser?.role === 'Manager' ||
+    hasPermission('complete_tasks');
   const showInventory = hasPermission('view_inventory');
   const showCatalog = hasPermission('view_catalog');
   const showExecutive = showAccessControl || showStores || canViewDataCenter;
@@ -2726,17 +2871,113 @@ const App: React.FC = () => {
                           </div>
 
                           <div className="p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                             {taskRecord.tasks.map((task) => (
+                             {taskRecord.tasks.map((task) => {
+                               const assigneeOptions = getAssignableTeamMembers(task.taskType);
+                               const assignedMember = dbTeamMembers.find((member) => member.id === task.assignedTeamMemberId);
+                               const dropdownOptions =
+                                 assignedMember && !assigneeOptions.some((member) => member.id === assignedMember.id)
+                                   ? [assignedMember, ...assigneeOptions]
+                                   : assigneeOptions;
+
+                               return (
                                <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.isComplete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100'}`}>
                                   <div className="flex items-center gap-3 mb-3">
-                                     <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${task.isComplete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-transparent border border-slate-200'}`}>
+                                     <button
+                                       type="button"
+                                       disabled={!canCompleteProductionTasks}
+                                       onClick={() =>
+                                         handleUpdateProductionTaskItem(
+                                           taskRecord.id,
+                                           taskRecord.orderId,
+                                           task.id,
+                                           { isComplete: !task.isComplete }
+                                         )
+                                       }
+                                       className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all disabled:opacity-40 ${task.isComplete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-transparent border border-slate-200'}`}
+                                     >
                                        <Check size={14} strokeWidth={4} />
-                                     </div>
+                                     </button>
                                      <span className={`text-[11px] font-black ${task.isComplete ? 'text-emerald-600 line-through' : 'text-slate-700'}`}>{task.taskName}</span>
                                   </div>
-                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{task.taskType}</p>
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3">{task.taskType}</p>
+                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                                    Assigned: {task.assignedTeamMemberName || 'Unassigned'}
+                                  </p>
+                                  <select
+                                    value={task.assignedTeamMemberId || ''}
+                                    disabled={!canAssignProductionTasks}
+                                    onChange={(e) =>
+                                      handleAssignTask(
+                                        taskRecord.id,
+                                        taskRecord.orderId,
+                                        task,
+                                        e.target.value
+                                      )
+                                    }
+                                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-bold outline-none mb-3 disabled:opacity-50"
+                                  >
+                                    <option value="">Unassigned</option>
+                                    {task.assignedTeamMemberId &&
+                                      !dropdownOptions.some((member) => member.id === task.assignedTeamMemberId) && (
+                                        <option value={task.assignedTeamMemberId}>
+                                          {task.assignedTeamMemberName || 'Assigned'}
+                                        </option>
+                                      )}
+                                    {dropdownOptions.map((member) => (
+                                      <option key={member.id} value={member.id}>
+                                        {member.displayName} — {member.workerType}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    value={task.notes || ''}
+                                    disabled={!canCompleteProductionTasks}
+                                    onChange={(e) =>
+                                      handleDraftProductionTaskItem(
+                                        taskRecord.id,
+                                        task.id,
+                                        { notes: e.target.value }
+                                      )
+                                    }
+                                    onBlur={(e) =>
+                                      handleUpdateProductionTaskItem(
+                                        taskRecord.id,
+                                        taskRecord.orderId,
+                                        task.id,
+                                        { notes: e.target.value }
+                                      )
+                                    }
+                                    placeholder="Notes..."
+                                    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[9px] font-bold outline-none mb-3 disabled:opacity-50"
+                                  />
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[8px] font-black text-slate-300 uppercase">Worker Init</span>
+                                    <input
+                                      value={task.signedBy || ''}
+                                      disabled={!canCompleteProductionTasks}
+                                      maxLength={3}
+                                      onChange={(e) =>
+                                        handleDraftProductionTaskItem(
+                                          taskRecord.id,
+                                          task.id,
+                                          { signedBy: e.target.value.toUpperCase() }
+                                        )
+                                      }
+                                      onBlur={(e) =>
+                                        handleUpdateProductionTaskItem(
+                                          taskRecord.id,
+                                          taskRecord.orderId,
+                                          task.id,
+                                          { signedBy: e.target.value.toUpperCase() }
+                                        )
+                                      }
+                                      placeholder="..."
+                                      className="w-10 bg-white border border-slate-200 rounded-lg py-1.5 text-[9px] font-black text-center uppercase outline-none disabled:opacity-50"
+                                    />
+                                  </div>
                                </div>
-                             ))}
+                               );
+                             })}
                           </div>
                        </div>
                      );

@@ -16,6 +16,7 @@ import {
   ProductionStatus,
   ProductionTaskStatus,
   Quote,
+  FirestoreTaskItem,
 } from '../types';
 import { db } from './firebase';
 
@@ -124,6 +125,62 @@ export const updateProductionStatus = async (
     productionStatus,
     updatedAt: serverTimestamp(),
   });
+};
+
+const calculateProductionTaskStatus = (
+  tasks: FirestoreTaskItem[]
+): ProductionTaskStatus => {
+  const completedCount = tasks.filter((task) => task.isComplete).length;
+
+  if (completedCount === 0) return 'Not Started';
+  if (completedCount === tasks.length) return 'Completed';
+  if (completedCount >= tasks.length - 1) return 'Quality Check';
+  return 'In Progress';
+};
+
+const mapTaskStatusToOrderProductionStatus = (
+  status: ProductionTaskStatus
+): ProductionStatus => {
+  if (status === 'Not Started') return 'Not Started';
+  if (status === 'In Progress') return 'In Production';
+  if (status === 'Quality Check') return 'Quality Check';
+  if (status === 'Ready') return 'Ready';
+  if (status === 'Completed') return 'Completed';
+  return 'Not Started';
+};
+
+export const updateProductionTaskItems = async ({
+  productionTaskId,
+  orderId,
+  tasks,
+}: {
+  productionTaskId: string;
+  orderId: string;
+  tasks: FirestoreTaskItem[];
+}) => {
+  const nextStatus = calculateProductionTaskStatus(tasks);
+  const nextOrderProductionStatus =
+    mapTaskStatusToOrderProductionStatus(nextStatus);
+
+  await updateDoc(doc(db, PRODUCTION_TASKS_COLLECTION, productionTaskId), {
+    tasks,
+    status: nextStatus,
+    startedAt:
+      nextStatus === 'Not Started' ? '' : new Date().toISOString(),
+    completedAt:
+      nextStatus === 'Completed' ? new Date().toISOString() : '',
+    updatedAt: serverTimestamp(),
+  });
+
+  await updateDoc(doc(db, ORDERS_COLLECTION, orderId), {
+    productionStatus: nextOrderProductionStatus,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    productionTaskStatus: nextStatus,
+    orderProductionStatus: nextOrderProductionStatus,
+  };
 };
 
 export const generateOrderNumber = () => {
