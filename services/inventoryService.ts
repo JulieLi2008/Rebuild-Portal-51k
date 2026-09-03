@@ -120,6 +120,23 @@ export const reserveStockForOrder = async (
   await runTransaction(db, async (transaction) => {
     const orderSnap = await transaction.get(orderRef);
 
+    const productDocs: Array<{
+      lineItem: QuoteItem;
+      productDoc: Awaited<ReturnType<typeof findProductDocInTransaction>>;
+      previousStock: number;
+      quantity: number;
+    }> = [];
+
+    for (const lineItem of order.lineItems) {
+      const productDoc = await findProductDocInTransaction(transaction, lineItem);
+      productDocs.push({
+        lineItem,
+        productDoc,
+        previousStock: normalizeNumber(productDoc.data.stockLevel),
+        quantity: normalizeNumber(lineItem.quantity),
+      });
+    }
+
     if (!orderSnap.exists()) {
       throw new Error('Order no longer exists.');
     }
@@ -134,13 +151,8 @@ export const reserveStockForOrder = async (
       throw new Error('Stock has already been deducted for this order.');
     }
 
-    for (let i = 0; i < order.lineItems.length; i += 1) {
-      const lineItem = order.lineItems[i];
-      const productDoc = await findProductDocInTransaction(transaction, lineItem);
-      const previousStock = normalizeNumber(productDoc.data.stockLevel);
-      const quantity = normalizeNumber(lineItem.quantity);
-
-      transaction.set(movementRefs[i], {
+    productDocs.forEach(({ lineItem, productDoc, previousStock, quantity }, index) => {
+      transaction.set(movementRefs[index], {
         productId: productDoc.ref.id,
         sku: productDoc.data.sku || lineItem.sku || productDoc.ref.id,
         productName: productDoc.data.name || lineItem.name || '',
@@ -155,7 +167,7 @@ export const reserveStockForOrder = async (
         createdAt: serverTimestamp(),
         createdBy,
       });
-    }
+    });
 
     transaction.update(orderRef, {
       inventoryStatus: 'Reserved',
@@ -181,6 +193,23 @@ export const deductStockForOrder = async (
   await runTransaction(db, async (transaction) => {
     const orderSnap = await transaction.get(orderRef);
 
+    const productDocs: Array<{
+      lineItem: QuoteItem;
+      productDoc: Awaited<ReturnType<typeof findProductDocInTransaction>>;
+      previousStock: number;
+      quantity: number;
+    }> = [];
+
+    for (const lineItem of order.lineItems) {
+      const productDoc = await findProductDocInTransaction(transaction, lineItem);
+      productDocs.push({
+        lineItem,
+        productDoc,
+        previousStock: normalizeNumber(productDoc.data.stockLevel),
+        quantity: normalizeNumber(lineItem.quantity),
+      });
+    }
+
     if (!orderSnap.exists()) {
       throw new Error('Order no longer exists.');
     }
@@ -191,31 +220,13 @@ export const deductStockForOrder = async (
       throw new Error('Stock has already been deducted for this order.');
     }
 
-    const productDocs: Array<{
-      lineItem: QuoteItem;
-      productDoc: Awaited<ReturnType<typeof findProductDocInTransaction>>;
-      previousStock: number;
-      quantity: number;
-    }> = [];
-
-    for (const lineItem of order.lineItems) {
-      const productDoc = await findProductDocInTransaction(transaction, lineItem);
-      const previousStock = normalizeNumber(productDoc.data.stockLevel);
-      const quantity = normalizeNumber(lineItem.quantity);
-
+    productDocs.forEach(({ lineItem, productDoc, previousStock, quantity }) => {
       if (previousStock < quantity) {
         throw new Error(
           `Not enough stock for ${productDoc.data.name || lineItem.name}. Available: ${previousStock}, required: ${quantity}.`
         );
       }
-
-      productDocs.push({
-        lineItem,
-        productDoc,
-        previousStock,
-        quantity,
-      });
-    }
+    });
 
     productDocs.forEach(({ lineItem, productDoc, previousStock, quantity }, index) => {
       const newStock = previousStock - quantity;
