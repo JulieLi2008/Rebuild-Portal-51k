@@ -69,6 +69,7 @@ import {
   OrderStatusV2,
   PaymentStatus,
   ProductionStatus,
+  StockMovement,
 } from './types';
 import { 
   INITIAL_USERS, 
@@ -107,6 +108,11 @@ import {
   updateProductionStatus,
   updateProductionTaskItems,
 } from './services/orderService';
+import {
+  deductStockForOrder,
+  getStockMovements,
+  reserveStockForOrder,
+} from './services/inventoryService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -344,6 +350,10 @@ const App: React.FC = () => {
   const [firestoreProductionTasks, setFirestoreProductionTasks] = useState<FirestoreProductionTask[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+  const [stockMovementsLoading, setStockMovementsLoading] = useState(false);
+  const [stockMovementsError, setStockMovementsError] = useState('');
+  const [inventoryActionLoadingOrderId, setInventoryActionLoadingOrderId] = useState<string | null>(null);
   const [dbTeamMembers, setDbTeamMembers] = useState<TeamMember[]>([]);
   const [teamMembersLoading, setTeamMembersLoading] = useState(false);
   const [teamMembersError, setTeamMembersError] = useState('');
@@ -532,6 +542,21 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadStockMovements = useCallback(async () => {
+    setStockMovementsLoading(true);
+    setStockMovementsError('');
+
+    try {
+      const movements = await getStockMovements();
+      setStockMovements(movements);
+    } catch (err) {
+      console.error('Failed to load stock movements:', err);
+      setStockMovementsError('Could not load stock movement history from Firebase.');
+    } finally {
+      setStockMovementsLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -571,6 +596,7 @@ const App: React.FC = () => {
         await loadQuotes();
         await loadTeamMembers();
         await loadOrdersAndTasks();
+        await loadStockMovements();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -581,7 +607,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers, loadOrdersAndTasks]);
+  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers, loadOrdersAndTasks, loadStockMovements]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -743,6 +769,7 @@ const App: React.FC = () => {
     await loadQuotes();
     await loadTeamMembers();
     await loadOrdersAndTasks();
+    await loadStockMovements();
   };
 
   const handleLogout = async () => {
@@ -1740,10 +1767,84 @@ const App: React.FC = () => {
     currentUser?.role === 'Manager' ||
     hasPermission('complete_tasks');
   const showInventory = hasPermission('view_inventory');
+  const canManageInventory =
+    currentUser?.role === 'SuperAdmin' ||
+    currentUser?.role === 'Manager' ||
+    hasPermission('edit_inventory');
   const showCatalog = hasPermission('view_catalog');
   const showExecutive = showAccessControl || showStores || canViewDataCenter;
   const showSales = showCustomersLeads || showQuoteBuilder || showQuotes || showOrders;
   const showProduction = showTaskManager || showInventory || showCatalog;
+
+  const handleReserveStockForOrder = async (order: FirestoreOrder) => {
+    if (!canManageInventory) {
+      alert('You do not have permission to reserve stock.');
+      return;
+    }
+
+    if (order.inventoryStatus === 'Reserved') {
+      alert('Stock is already reserved for this order.');
+      return;
+    }
+
+    if (order.inventoryStatus === 'Deducted') {
+      alert('Stock has already been deducted for this order.');
+      return;
+    }
+
+    if (!window.confirm(`Reserve stock for order ${order.orderNumber}?`)) {
+      return;
+    }
+
+    setInventoryActionLoadingOrderId(order.id);
+
+    try {
+      await reserveStockForOrder(order, currentUser?.id || '');
+      await Promise.all([
+        loadOrdersAndTasks(),
+        loadStockMovements(),
+      ]);
+      alert('Stock reserved successfully.');
+    } catch (err: any) {
+      console.error('Failed to reserve stock:', err);
+      alert(err?.message || 'Could not reserve stock.');
+    } finally {
+      setInventoryActionLoadingOrderId(null);
+    }
+  };
+
+  const handleDeductStockForOrder = async (order: FirestoreOrder) => {
+    if (!canManageInventory) {
+      alert('You do not have permission to deduct stock.');
+      return;
+    }
+
+    if (order.inventoryStatus === 'Deducted') {
+      alert('Stock has already been deducted for this order.');
+      return;
+    }
+
+    if (!window.confirm(`Deduct stock for order ${order.orderNumber}? This will reduce catalog stock levels.`)) {
+      return;
+    }
+
+    setInventoryActionLoadingOrderId(order.id);
+
+    try {
+      await deductStockForOrder(order, currentUser?.id || '');
+      await Promise.all([
+        loadOrdersAndTasks(),
+        loadProducts(),
+        loadStockMovements(),
+      ]);
+      alert('Stock deducted successfully.');
+    } catch (err: any) {
+      console.error('Failed to deduct stock:', err);
+      alert(err?.message || 'Could not deduct stock.');
+    } finally {
+      setInventoryActionLoadingOrderId(null);
+    }
+  };
 
   // Dashboard Title
   const userStoreName = dbStores.find(s => s.id === currentUser?.storeId)?.store_name;
@@ -3336,7 +3437,7 @@ const App: React.FC = () => {
                 </p>
               )}
               <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
-                <table className="w-full text-left min-w-[1100px]">
+                <table className="w-full text-left min-w-[1300px]">
                   <thead>
                     <tr className="bg-slate-50 border-b">
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Order Ref</th>
@@ -3344,6 +3445,7 @@ const App: React.FC = () => {
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Payment</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Production</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Inventory</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Total</th>
                     </tr>
                   </thead>
@@ -3390,12 +3492,50 @@ const App: React.FC = () => {
                               ))}
                             </select>
                           </td>
+                          <td className="px-8 py-6">
+                            <span className={`inline-flex px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                              order.inventoryStatus === 'Deducted'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : order.inventoryStatus === 'Reserved'
+                                  ? 'bg-amber-50 text-amber-700'
+                                  : 'bg-slate-50 text-slate-500'
+                            }`}>
+                              {order.inventoryStatus || 'Not Reserved'}
+                            </span>
+                            {canManageInventory && (
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                <button
+                                  type="button"
+                                  onClick={() => handleReserveStockForOrder(order)}
+                                  disabled={
+                                    inventoryActionLoadingOrderId === order.id ||
+                                    order.inventoryStatus === 'Reserved' ||
+                                    order.inventoryStatus === 'Deducted'
+                                  }
+                                  className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  {inventoryActionLoadingOrderId === order.id ? 'Working...' : 'Reserve Stock'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeductStockForOrder(order)}
+                                  disabled={
+                                    inventoryActionLoadingOrderId === order.id ||
+                                    order.inventoryStatus === 'Deducted'
+                                  }
+                                  className="px-3 py-2 rounded-xl bg-blue-600 text-[9px] font-black uppercase tracking-widest text-white hover:bg-blue-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  Deduct Stock
+                                </button>
+                              </div>
+                            )}
+                          </td>
                           <td className="px-8 py-6 text-right font-black text-blue-600 text-sm">${order.total.toFixed(2)}</td>
                         </tr>
                       ))}
                     {firestoreOrders.length === 0 && !ordersLoading && (
                       <tr>
-                        <td colSpan={6} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                        <td colSpan={7} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
                           No live orders yet. Convert an accepted quote to create the first order.
                         </td>
                       </tr>
@@ -3547,6 +3687,79 @@ const App: React.FC = () => {
                         )}
                      </tbody>
                   </table>
+               </div>
+
+               <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
+                  <div className="px-8 py-6 border-b border-slate-100">
+                    <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Stock Movement History</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Reserve and deduct records from live orders</p>
+                  </div>
+
+                  {stockMovementsLoading && (
+                    <p className="px-8 py-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Loading stock movements...
+                    </p>
+                  )}
+
+                  {stockMovementsError && (
+                    <p className="px-8 py-4 text-sm font-bold text-red-500">
+                      {stockMovementsError}
+                    </p>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left min-w-[1100px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b">
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Type</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">SKU</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Qty</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Previous</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">New</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Order</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Customer</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Created</th>
+                          <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {stockMovements.map((movement) => (
+                          <tr key={movement.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-8 py-5">
+                              <span className={`inline-flex px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                                movement.movementType === 'Deducted'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : movement.movementType === 'Reserved'
+                                    ? 'bg-amber-50 text-amber-700'
+                                    : 'bg-slate-50 text-slate-600'
+                              }`}>
+                                {movement.movementType}
+                              </span>
+                            </td>
+                            <td className="px-8 py-5 text-sm font-black text-slate-800">{movement.productName || '—'}</td>
+                            <td className="px-8 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">{movement.sku || '—'}</td>
+                            <td className="px-8 py-5 text-center text-sm font-black">{movement.quantity}</td>
+                            <td className="px-8 py-5 text-center text-sm font-bold text-slate-500">{movement.previousStock}</td>
+                            <td className="px-8 py-5 text-center text-sm font-black">{movement.newStock}</td>
+                            <td className="px-8 py-5 text-xs font-black text-slate-700">{movement.orderNumber || '—'}</td>
+                            <td className="px-8 py-5 text-xs font-bold text-slate-500">{movement.customerName || '—'}</td>
+                            <td className="px-8 py-5 text-[10px] font-bold text-slate-400">
+                              {movement.createdAt ? new Date(movement.createdAt).toLocaleString() : '—'}
+                            </td>
+                            <td className="px-8 py-5 text-xs font-medium text-slate-400">{movement.notes || '—'}</td>
+                          </tr>
+                        ))}
+                        {!stockMovementsLoading && stockMovements.length === 0 && (
+                          <tr>
+                            <td colSpan={10} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                              No stock movements yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                </div>
             </div>
           )}

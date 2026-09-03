@@ -251,6 +251,36 @@ export type ProductionStatus =
   | 'Ready'
   | 'Completed';
 
+export type InventoryStatus =
+  | 'Not Reserved'
+  | 'Reserved'
+  | 'Deducted';
+
+export type StockMovementType =
+  | 'Reserved'
+  | 'Deducted'
+  | 'Adjusted'
+  | 'Received'
+  | 'Returned'
+  | 'Damaged';
+
+export interface StockMovement {
+  id: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  orderId?: string;
+  orderNumber?: string;
+  customerName?: string;
+  movementType: StockMovementType;
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
 export interface FirestoreOrder {
   id: string;
   orderNumber: string;
@@ -273,6 +303,9 @@ export interface FirestoreOrder {
   status: OrderStatusV2;
   paymentStatus: PaymentStatus;
   productionStatus: ProductionStatus;
+  inventoryStatus?: InventoryStatus;
+  inventoryReservedAt?: string;
+  inventoryDeductedAt?: string;
   orderDate: string;
   dueDate?: string;
   notes?: string;
