@@ -194,6 +194,57 @@ export const mockDatabase = {
         edit_credit: true,
         view_reports: true
       }
+    },
+    {
+      id: 'Designer',
+      name: 'Designer',
+      permissions: {
+        view_dashboard: true,
+        view_customers: true,
+        view_customer_phone: true,
+        view_customer_email: true,
+        view_customer_address: true,
+        view_leads: true,
+        view_quotes: true,
+        view_orders: true,
+        view_store_orders: true,
+        view_production_tasks: true,
+        complete_tasks: true,
+        view_design_files: true,
+        view_drawings: true,
+        upload_files: true,
+        view_production_specs: true
+      }
+    },
+    {
+      id: 'Cabinet Maker',
+      name: 'Cabinet Maker',
+      permissions: {
+        view_dashboard: true,
+        view_orders: true,
+        view_store_orders: true,
+        view_production_tasks: true,
+        complete_tasks: true,
+        view_drawings: true,
+        view_production_specs: true,
+        view_inventory: true,
+        view_catalog: true
+      }
+    },
+    {
+      id: 'Installer',
+      name: 'Installer',
+      permissions: {
+        view_dashboard: true,
+        view_orders: true,
+        view_store_orders: true,
+        view_production_tasks: true,
+        complete_tasks: true,
+        view_customer_phone: true,
+        view_customer_address: true,
+        view_drawings: true,
+        upload_files: true
+      }
     }
   ]
 };

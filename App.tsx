@@ -252,6 +252,7 @@ const EMPLOYMENT_TYPES: EmploymentType[] = [
 ];
 
 const TASK_FOCUSED_ROLES = [
+  'Designer',
   'Worker',
   'Cabinet Maker',
   'Installer',
@@ -263,6 +264,7 @@ const TASK_FOCUSED_ROLES = [
 const PERMISSION_ALIASES: Record<string, string[]> = {
   view_catalog: ['view_catalog', 'view_products'],
   view_production_tasks: ['view_production_tasks', 'view_tasks', 'Order Tasks'],
+  complete_tasks: ['complete_tasks', 'Complete Tasks', 'complete tasks'],
   view_all_orders: ['view_all_orders', 'All Orders'],
   view_store_orders: ['view_store_orders', 'Store Orders'],
   view_payment: ['view_payment', 'Payment'],
@@ -272,6 +274,57 @@ const PERMISSION_ALIASES: Record<string, string[]> = {
   view_customer_phone: ['view_customer_phone', 'Phone', 'Cell'],
   view_customer_email: ['view_customer_email', 'Email'],
   view_customer_address: ['view_customer_address', 'Address'],
+};
+
+const isPermissionEnabled = (value: unknown) =>
+  value === true || value === 'true' || value === 1 || value === '1';
+
+const getPermissionType = (permission: string) => {
+  if (permission.startsWith('view_')) return 'view';
+  if (permission.startsWith('create_')) return 'create';
+  if (permission.startsWith('edit_')) return 'edit';
+  if (permission.startsWith('delete_')) return 'delete';
+  if (permission.startsWith('manage_')) return 'manage';
+  if (permission.includes('payment') || permission.includes('payroll')) return 'financial';
+  return 'other';
+};
+
+const getPermissionTypeLabel = (permission: string) => {
+  const type = getPermissionType(permission);
+
+  const labels: Record<string, string> = {
+    view: 'View',
+    create: 'Create',
+    edit: 'Edit',
+    delete: 'Delete',
+    manage: 'Manage',
+    financial: 'Financial',
+    other: 'Other',
+  };
+
+  return labels[type] || 'Other';
+};
+
+const getPermissionTypeClasses = (permission: string) => {
+  const type = getPermissionType(permission);
+
+  const classes: Record<string, string> = {
+    view: 'bg-blue-50 text-blue-700 border-blue-200',
+    create: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    edit: 'bg-amber-50 text-amber-700 border-amber-200',
+    delete: 'bg-red-50 text-red-700 border-red-200',
+    manage: 'bg-violet-50 text-violet-700 border-violet-200',
+    financial: 'bg-slate-100 text-slate-800 border-slate-300',
+    other: 'bg-slate-50 text-slate-600 border-slate-200',
+  };
+
+  return classes[type] || classes.other;
+};
+
+const formatPermissionLabel = (permission: string) => {
+  return permission
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 
 const App: React.FC = () => {
@@ -654,16 +707,24 @@ const App: React.FC = () => {
   // Get current user's role permissions
   const currentUserRolePermissions = useMemo(() => {
     if (!currentUser) return null;
-    return dbRoles.find(r => r.name === currentUser.role)?.permissions || {};
+
+    const roleName = currentUser.role?.trim();
+    if (!roleName) return null;
+
+    const role = dbRoles.find(
+      (r) => r.name === roleName || r.id === roleName
+    );
+
+    return role?.permissions || {};
   }, [currentUser, dbRoles]);
 
   const hasPermission = (permission: string) => {
-    if (!currentUserRolePermissions) return false;
     if (currentUser?.role === 'SuperAdmin') return true;
-    if (currentUserRolePermissions[permission] === true) return true;
+    if (!currentUserRolePermissions) return false;
+    if (isPermissionEnabled(currentUserRolePermissions[permission])) return true;
 
     const aliases = PERMISSION_ALIASES[permission] || [permission];
-    return aliases.some((key) => currentUserRolePermissions[key] === true);
+    return aliases.some((key) => isPermissionEnabled(currentUserRolePermissions[key]));
   };
 
   const canAccess = (roles: UserRole[]) => currentUser && roles.includes(currentUser.role);
@@ -1673,6 +1734,7 @@ const App: React.FC = () => {
     currentUser?.role === 'SuperAdmin' ||
     currentUser?.role === 'Manager' ||
     hasPermission('assign_tasks');
+  // Completion is driven by role permission, not workerType / Cabinet Maker / Installer hardcoding.
   const canCompleteProductionTasks =
     currentUser?.role === 'SuperAdmin' ||
     currentUser?.role === 'Manager' ||
@@ -2878,13 +2940,14 @@ const App: React.FC = () => {
                                  assignedMember && !assigneeOptions.some((member) => member.id === assignedMember.id)
                                    ? [assignedMember, ...assigneeOptions]
                                    : assigneeOptions;
+                               const canCompleteThisTask = canCompleteProductionTasks;
 
                                return (
                                <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.isComplete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100'}`}>
                                   <div className="flex items-center gap-3 mb-3">
                                      <button
                                        type="button"
-                                       disabled={!canCompleteProductionTasks}
+                                       disabled={!canCompleteThisTask}
                                        onClick={() =>
                                          handleUpdateProductionTaskItem(
                                            taskRecord.id,
@@ -2931,7 +2994,7 @@ const App: React.FC = () => {
                                   </select>
                                   <input
                                     value={task.notes || ''}
-                                    disabled={!canCompleteProductionTasks}
+                                    disabled={!canCompleteThisTask}
                                     onChange={(e) =>
                                       handleDraftProductionTaskItem(
                                         taskRecord.id,
@@ -2954,7 +3017,7 @@ const App: React.FC = () => {
                                     <span className="text-[8px] font-black text-slate-300 uppercase">Worker Init</span>
                                     <input
                                       value={task.signedBy || ''}
-                                      disabled={!canCompleteProductionTasks}
+                                      disabled={!canCompleteThisTask}
                                       maxLength={3}
                                       onChange={(e) =>
                                         handleDraftProductionTaskItem(
@@ -2989,9 +3052,20 @@ const App: React.FC = () => {
 
           {activeView === 'Users' && (
             <div className="space-y-8 animate-in fade-in duration-500">
-               <div className="flex items-center justify-between">
-                 <h3 className="text-lg font-black uppercase tracking-widest">Platform Access Governance</h3>
-                 <button onClick={() => { setNewRoleName(''); setEditingRoleId(null); setShowRoleModal(true); }} className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase shadow-lg shadow-blue-100"><Plus size={14} className="inline mr-2" /> Define New Role</button>
+               <div className="flex flex-wrap items-center justify-between gap-3">
+                 <div>
+                   <h3 className="text-lg font-black uppercase tracking-widest">Platform Access Governance</h3>
+                   <p className="text-xs font-bold text-slate-400 mt-1">
+                     Manage roles and edit permissions below.
+                   </p>
+                 </div>
+                 <button
+                   type="button"
+                   onClick={() => { setNewRoleName(''); setEditingRoleId(null); setShowRoleModal(true); }}
+                   className="bg-blue-600 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase shadow-lg shadow-blue-100"
+                 >
+                   <Plus size={14} className="inline mr-2" /> Define New Role
+                 </button>
                </div>
                
                {rolesLoading && (
@@ -3008,44 +3082,100 @@ const App: React.FC = () => {
 
                {showRoleModal && (
                  <div className="bg-white p-8 rounded-[32px] border border-blue-200 shadow-xl mb-8 animate-in slide-in-from-top-4">
-                   <div className="flex justify-between items-center mb-6"><h4 className="font-black uppercase text-xs">{editingRoleId ? 'Edit Role' : 'Create Access Role'}</h4><button onClick={() => setShowRoleModal(false)}><X size={18} /></button></div>
-                   <div className="flex gap-4"><input type="text" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="Enter Role Title..." className="flex-1 bg-slate-50 border p-4 rounded-xl outline-none text-sm font-bold" /><button onClick={handleAddRole} className="bg-blue-600 text-white px-8 rounded-xl font-black text-[10px] uppercase">{editingRoleId ? 'Save' : 'Register'}</button></div>
+                   <div className="flex justify-between items-center mb-6"><h4 className="font-black uppercase text-xs">{editingRoleId ? 'Edit Role' : 'Create Access Role'}</h4><button type="button" onClick={() => setShowRoleModal(false)}><X size={18} /></button></div>
+                   <div className="flex gap-4"><input type="text" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="Enter Role Title..." className="flex-1 bg-slate-50 border p-4 rounded-xl outline-none text-sm font-bold" /><button type="button" onClick={handleAddRole} className="bg-blue-600 text-white px-8 rounded-xl font-black text-[10px] uppercase">{editingRoleId ? 'Save' : 'Register'}</button></div>
                  </div>
                )}
 
-               <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide">
-                  <table className="w-full text-left min-w-[1200px] border-collapse">
-                     <thead className="sticky top-0 bg-slate-50 z-10">
-                       <tr className="border-b">
-                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase sticky left-0 bg-slate-50 z-20">Role Identifier</th>
-                         {PERMISSION_COLUMNS.map(c => (
-                           <th key={c} className="px-3 py-5 text-[8px] text-center uppercase text-slate-400 border-l border-slate-100 max-w-[80px] leading-tight">{c.replace(/_/g, ' ')}</th>
-                         ))}
-                         <th className="px-8 py-5 text-right uppercase text-slate-400 text-[10px] border-l border-slate-100">Actions</th>
-                       </tr>
-                     </thead>
-                     <tbody className="divide-y">
-                        {dbRoles.map(role => (
-                          <tr key={role.id} className="hover:bg-slate-50/50">
-                             <td className="px-8 py-6 text-sm font-black sticky left-0 bg-white group-hover:bg-slate-50 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.05)]">{role.name}</td>
-                             {PERMISSION_COLUMNS.map(c => (
-                               <td key={c} className="text-center border-l border-slate-50">
-                                 <button 
-                                   onClick={() => togglePermission(role.id, c)}
-                                   className={`w-4 h-4 rounded mx-auto border flex items-center justify-center transition-all ${role.permissions[c] ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-50 border-slate-200 text-transparent'}`}
-                                 >
-                                   <Check size={10}/>
-                                 </button>
-                               </td>
-                             ))}
-                             <td className="px-8 py-6 text-right space-x-2 border-l border-slate-50">
-                               <button onClick={() => handleEditRole(role)} className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-blue-600 transition-all"><Edit3 size={14}/></button>
-                               <button onClick={() => handleDeleteRole(role.id)} className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"><Trash2 size={14}/></button>
-                             </td>
+               <div>
+                 <h4 className="text-sm font-black uppercase tracking-widest text-slate-400 mb-3">
+                   Role Identifiers
+                 </h4>
+                 <div className="flex flex-wrap gap-2">
+                   {dbRoles.map((role) => (
+                     <div key={role.id} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                       <span className="text-xs font-black text-slate-700">{role.name}</span>
+                       <button
+                         type="button"
+                         onClick={() => handleEditRole(role)}
+                         className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-blue-600 transition-all"
+                         aria-label={`Edit ${role.name}`}
+                       >
+                         <Edit3 size={14} />
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => handleDeleteRole(role.id)}
+                         className="p-2 bg-slate-100 rounded-lg text-slate-400 hover:text-red-500 transition-all"
+                         aria-label={`Delete ${role.name}`}
+                       >
+                         <Trash2 size={14} />
+                       </button>
+                     </div>
+                   ))}
+                 </div>
+               </div>
+
+               <div className="bg-white rounded-[32px] border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto scrollbar-hide">
+                    <table className="w-full min-w-[900px] border-collapse">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="sticky left-0 z-20 bg-slate-50 px-5 py-4 text-left text-[10px] font-black uppercase tracking-widest text-slate-500 border-r border-slate-200">
+                            Permission
+                          </th>
+                          <th className="px-4 py-4 text-left text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            Type
+                          </th>
+                          {dbRoles.map((role) => (
+                            <th
+                              key={role.id}
+                              className="px-4 py-4 text-center text-[10px] font-black uppercase tracking-widest text-slate-500 whitespace-nowrap"
+                            >
+                              {role.name}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {PERMISSION_COLUMNS.map((permission) => (
+                          <tr key={permission} className="hover:bg-slate-50/80">
+                            <td className="sticky left-0 z-10 bg-white px-5 py-4 text-sm font-black text-slate-800 border-r border-slate-200 whitespace-nowrap">
+                              {formatPermissionLabel(permission)}
+                            </td>
+                            <td className="px-4 py-4">
+                              <span className={`inline-flex rounded-full border px-3 py-1 text-[9px] font-black uppercase tracking-widest ${getPermissionTypeClasses(permission)}`}>
+                                {getPermissionTypeLabel(permission)}
+                              </span>
+                            </td>
+                            {dbRoles.map((role) => {
+                              const isChecked = role.permissions?.[permission] === true;
+
+                              return (
+                                <td
+                                  key={`${permission}-${role.id}`}
+                                  className="px-4 py-4 text-center"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePermission(role.id, permission)}
+                                    aria-label={`Toggle ${permission} for ${role.name}`}
+                                    className={`mx-auto flex h-9 w-9 items-center justify-center rounded-xl border-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                                      isChecked
+                                        ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                        : 'border-slate-400 bg-white text-transparent hover:border-blue-400 hover:bg-blue-50'
+                                    }`}
+                                  >
+                                    <Check size={16} strokeWidth={4} />
+                                  </button>
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
-                     </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+                  </div>
                </div>
             </div>
           )}
