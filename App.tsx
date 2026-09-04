@@ -333,6 +333,27 @@ const formatPermissionLabel = (permission: string) => {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 
+const formatMoney = (value?: number) => {
+  return `$${Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatDate = (value?: string) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString();
+};
+
+const formatTaxRate = (value?: number) => {
+  return `${(Number(value || 0) * 100).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}%`;
+};
+
 const App: React.FC = () => {
   // --- Central Data Store ---
   const [dbStores, setDbStores] = useState<StoreInfo[]>([]);
@@ -561,6 +582,10 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [activeView, setActiveView] = useState('Dashboard');
+  const [selectedOrderId, setSelectedOrderId] = useState('');
+  const [selectedQuoteId, setSelectedQuoteId] = useState('');
+  const [selectedLeadIdForDetail, setSelectedLeadIdForDetail] = useState('');
+  const [selectedCustomerIdForDetail, setSelectedCustomerIdForDetail] = useState('');
   const [users] = useState<UserProfile[]>(INITIAL_USERS as UserProfile[]);
 
   useEffect(() => {
@@ -1260,6 +1285,21 @@ const App: React.FC = () => {
     }
   };
 
+  const handlePrintQuote = () => {
+    window.print();
+  };
+
+  const handleMarkQuoteAsSent = async (quoteId: string) => {
+    try {
+      await updateQuoteStatus(quoteId, 'Sent');
+      await loadQuotes();
+      alert('Quote marked as sent.');
+    } catch (err) {
+      console.error('Failed to mark quote as sent:', err);
+      alert('Could not update quote status. Please try again.');
+    }
+  };
+
   const handleConvertQuoteToOrder = async (quote: Quote) => {
     if (quote.status !== 'Accepted') {
       alert('Only accepted quotes can be converted to orders.');
@@ -1721,6 +1761,100 @@ const App: React.FC = () => {
     });
   }, [dbLeads, leadStatusFilter]);
 
+  const openOrderDetail = (orderId: string) => {
+    setSelectedOrderId(orderId);
+    setActiveView('OrderDetail');
+  };
+
+  const openQuoteDetail = (quoteId: string) => {
+    setSelectedQuoteId(quoteId);
+    setActiveView('QuoteDetail');
+  };
+
+  const openCustomerLeadDetail = ({
+    leadId,
+    customerId,
+  }: {
+    leadId?: string;
+    customerId?: string;
+  }) => {
+    setSelectedLeadIdForDetail(leadId || '');
+    setSelectedCustomerIdForDetail(customerId || '');
+    setActiveView('CustomerLeadDetail');
+  };
+
+  const selectedOrderDetail = useMemo(() => {
+    return firestoreOrders.find((order) => order.id === selectedOrderId) || null;
+  }, [firestoreOrders, selectedOrderId]);
+
+  const selectedOrderQuote = useMemo(() => {
+    if (!selectedOrderDetail?.quoteId) return null;
+    return dbQuotes.find((quote) => quote.id === selectedOrderDetail.quoteId) || null;
+  }, [dbQuotes, selectedOrderDetail]);
+
+  const selectedQuoteDetail = useMemo(() => {
+    return dbQuotes.find((quote) => quote.id === selectedQuoteId) || null;
+  }, [dbQuotes, selectedQuoteId]);
+
+  const selectedQuoteCustomer = useMemo(() => {
+    if (!selectedQuoteDetail?.customerId) return null;
+    return (
+      dbCustomers.find(
+        (customer) => customer.id === selectedQuoteDetail.customerId
+      ) || null
+    );
+  }, [dbCustomers, selectedQuoteDetail]);
+
+  const selectedQuoteLead = useMemo(() => {
+    if (!selectedQuoteDetail?.leadId) return null;
+    return dbLeads.find((lead) => lead.id === selectedQuoteDetail.leadId) || null;
+  }, [dbLeads, selectedQuoteDetail]);
+
+  const selectedOrderProductionTask = useMemo(() => {
+    if (!selectedOrderDetail?.id) return null;
+    return (
+      firestoreProductionTasks.find(
+        (task) => task.orderId === selectedOrderDetail.id
+      ) || null
+    );
+  }, [firestoreProductionTasks, selectedOrderDetail]);
+
+  const selectedOrderStockMovements = useMemo(() => {
+    if (!selectedOrderDetail?.id) return [];
+    return stockMovements.filter(
+      (movement) => movement.orderId === selectedOrderDetail.id
+    );
+  }, [stockMovements, selectedOrderDetail]);
+
+  const selectedLeadDetail = useMemo(() => {
+    return dbLeads.find((lead) => lead.id === selectedLeadIdForDetail) || null;
+  }, [dbLeads, selectedLeadIdForDetail]);
+
+  const selectedCustomerDetail = useMemo(() => {
+    const customerId =
+      selectedCustomerIdForDetail || selectedLeadDetail?.customerId || '';
+
+    if (!customerId) return null;
+
+    return dbCustomers.find((customer) => customer.id === customerId) || null;
+  }, [dbCustomers, selectedCustomerIdForDetail, selectedLeadDetail]);
+
+  const selectedCustomerQuotes = useMemo(() => {
+    const customerId = selectedCustomerDetail?.id || selectedLeadDetail?.customerId || '';
+    if (!customerId) return [];
+    return dbQuotes.filter((quote) => quote.customerId === customerId);
+  }, [dbQuotes, selectedCustomerDetail, selectedLeadDetail]);
+
+  const selectedCustomerOrders = useMemo(() => {
+    const customerId = selectedCustomerDetail?.id || selectedLeadDetail?.customerId || '';
+    if (!customerId) return [];
+    return firestoreOrders.filter((order) => order.customerId === customerId);
+  }, [firestoreOrders, selectedCustomerDetail, selectedLeadDetail]);
+
+  const getStoreName = (storeId?: string) => {
+    return dbStores.find((store) => store.id === storeId)?.store_name || storeId || '';
+  };
+
   // View Handlers
   const openOrderDrilldown = (id: string) => {
     setActiveView('TaskManager');
@@ -1772,6 +1906,16 @@ const App: React.FC = () => {
     currentUser?.role === 'Manager' ||
     hasPermission('edit_inventory');
   const showCatalog = hasPermission('view_catalog');
+  const canViewCustomerPhone =
+    currentUser?.role === 'SuperAdmin' || hasPermission('view_customer_phone');
+  const canViewCustomerEmail =
+    currentUser?.role === 'SuperAdmin' || hasPermission('view_customer_email');
+  const canViewCustomerAddress =
+    currentUser?.role === 'SuperAdmin' || hasPermission('view_customer_address');
+  const canViewQuotePrice =
+    currentUser?.role === 'SuperAdmin' || hasPermission('view_quote_price');
+  const canViewOrderPayment =
+    currentUser?.role === 'SuperAdmin' || hasPermission('view_order_payment');
   const showExecutive = showAccessControl || showStores || canViewDataCenter;
   const showSales = showCustomersLeads || showQuoteBuilder || showQuotes || showOrders;
   const showProduction = showTaskManager || showInventory || showCatalog;
@@ -1907,7 +2051,7 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-[#f8fafc] text-slate-900 font-sans overflow-hidden">
       {/* SIDEBAR */}
-      <aside className="w-72 bg-white border-r border-slate-200 p-6 flex flex-col z-50">
+      <aside className="no-print w-72 bg-white border-r border-slate-200 p-6 flex flex-col z-50">
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shrink-0"><Layers size={22} /></div>
           <h1 className="font-black text-lg tracking-tighter">51Wood Portal</h1>
@@ -1951,7 +2095,14 @@ const App: React.FC = () => {
                   showQuotes && {id:'Quotes',label:'Quotes',icon:FileText},
                   showOrders && {id:'Orders',label:'Orders',icon:ClipboardList},
                 ].filter(Boolean).map(item => (
-                  <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeView === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'}`}>
+                  <button key={item.id} onClick={() => setActiveView(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                    activeView === item.id ||
+                    (item.id === 'Quotes' && activeView === 'QuoteDetail') ||
+                    (item.id === 'Orders' && activeView === 'OrderDetail') ||
+                    (item.id === 'CustomersLeads' && activeView === 'CustomerLeadDetail')
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-100'
+                      : 'text-slate-500 hover:bg-slate-50 hover:text-blue-600'
+                  }`}>
                     <item.icon size={18} /><span className="font-bold text-xs truncate">{item.label}</span>
                   </button>
                 ))}
@@ -1994,7 +2145,7 @@ const App: React.FC = () => {
 
       {/* MAIN */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-10 flex items-center justify-between shrink-0 z-40">
+        <header className="no-print h-20 bg-white/80 backdrop-blur-md border-b border-slate-200 px-10 flex items-center justify-between shrink-0 z-40">
           <h2 className="text-xl font-black tracking-tight capitalize">{activeView.replace(/([A-Z])/g, ' $1').trim()}</h2>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -2241,6 +2392,7 @@ const App: React.FC = () => {
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Status</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Manager</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Created</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -2272,11 +2424,25 @@ const App: React.FC = () => {
                         <td className="px-8 py-6 text-xs font-bold text-slate-500">
                           {lead.createdAt ? new Date(lead.createdAt).toLocaleDateString() : '—'}
                         </td>
+                        <td className="px-8 py-6 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openCustomerLeadDetail({
+                                leadId: lead.id,
+                                customerId: lead.customerId,
+                              })
+                            }
+                            className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                          >
+                            View Detail
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {filteredLeads.length === 0 && !customerLeadLoading && (
                       <tr>
-                        <td colSpan={8} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                        <td colSpan={9} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
                           No leads found
                         </td>
                       </tr>
@@ -2284,6 +2450,224 @@ const App: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {activeView === 'CustomerLeadDetail' && (
+            <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-2xl font-black tracking-tight">
+                    {selectedCustomerDetail?.displayName || selectedLeadDetail?.customerName || 'Customer / Lead Detail'}
+                  </h3>
+                  {selectedLeadDetail && (
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">
+                      Lead status: {selectedLeadDetail.status}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('CustomersLeads')}
+                  className="px-5 py-3 rounded-2xl bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                >
+                  Back to Customers / Leads
+                </button>
+              </div>
+
+              {!selectedLeadDetail && !selectedCustomerDetail ? (
+                <div className="bg-white rounded-[40px] border border-dashed border-slate-200 py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                  No customer or lead selected.
+                </div>
+              ) : (
+                <>
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8 space-y-6">
+                    <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Customer Profile</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Name</p>
+                        <p className="text-sm font-black text-slate-800 mt-1">{selectedCustomerDetail?.displayName || selectedLeadDetail?.customerName || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Phone</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerPhone ? (selectedCustomerDetail?.phone || selectedLeadDetail?.phone || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerEmail ? (selectedCustomerDetail?.email || selectedLeadDetail?.email || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Address</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerAddress ? (selectedCustomerDetail?.address || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">City</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedCustomerDetail?.city || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Province</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedCustomerDetail?.province || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Postal Code</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedCustomerDetail?.postalCode || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Source</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedCustomerDetail?.source || selectedLeadDetail?.source || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Created</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{formatDate(selectedCustomerDetail?.createdAt || selectedLeadDetail?.createdAt) || '—'}</p>
+                      </div>
+                      <div className="md:col-span-2">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notes</p>
+                        <p className="text-sm font-medium text-slate-500 mt-1">{selectedCustomerDetail?.notes || '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {selectedLeadDetail && (
+                    <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8 space-y-6">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Lead / Project</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Project Type</p>
+                          <p className="text-sm font-black text-slate-800 mt-1">{selectedLeadDetail.projectType || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Project Address</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerAddress ? (selectedLeadDetail.projectAddress || '—') : 'Restricted'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Source</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{selectedLeadDetail.source || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</p>
+                          <select
+                            value={selectedLeadDetail.status}
+                            onChange={(e) => handleLeadStatusChange(selectedLeadDetail.id, e.target.value as LeadStatus)}
+                            className="mt-2 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-black uppercase outline-none"
+                          >
+                            {['New', 'Contacted', 'Measure Scheduled', 'Quoted', 'Won', 'Lost'].map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Budget</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{selectedLeadDetail.budget || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Timeline</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{selectedLeadDetail.timeline || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Assigned Store</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{getStoreName(selectedLeadDetail.assignedStoreId) || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Assigned Manager</p>
+                          <p className="text-sm font-bold text-slate-600 mt-1">{selectedLeadDetail.assignedManager || '—'}</p>
+                        </div>
+                        <div className="md:col-span-2">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Notes</p>
+                          <p className="text-sm font-medium text-slate-500 mt-1">{selectedLeadDetail.notes || '—'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-8 py-6 border-b border-slate-100">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Linked Quotes</h4>
+                    </div>
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-slate-50 border-b">
+                          <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Quote</th>
+                          <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Status</th>
+                          <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Total</th>
+                          <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Created</th>
+                          <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {selectedCustomerQuotes.map((quote) => (
+                          <tr key={quote.id}>
+                            <td className="px-8 py-5 text-sm font-black">{quote.quoteNumber}</td>
+                            <td className="px-8 py-5 text-xs font-black uppercase text-slate-500">{quote.status}</td>
+                            <td className="px-8 py-5 text-sm font-bold text-blue-600">{canViewQuotePrice ? formatMoney(quote.total) : 'Restricted'}</td>
+                            <td className="px-8 py-5 text-xs font-bold text-slate-400">{formatDate(quote.createdAt) || '—'}</td>
+                            <td className="px-8 py-5 text-right">
+                              <button
+                                type="button"
+                                onClick={() => openQuoteDetail(quote.id)}
+                                className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                              >
+                                View Quote
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {selectedCustomerQuotes.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-12 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No linked quotes</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-8 py-6 border-b border-slate-100">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Linked Orders</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[900px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b">
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Order</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Status</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Payment</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Production</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Inventory</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Total</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {selectedCustomerOrders.map((order) => (
+                            <tr key={order.id}>
+                              <td className="px-8 py-5 text-sm font-black">{order.orderNumber}</td>
+                              <td className="px-8 py-5 text-xs font-black uppercase text-slate-500">{order.status}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500">{canViewOrderPayment ? order.paymentStatus : 'Restricted'}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500">{order.productionStatus}</td>
+                              <td className="px-8 py-5 text-xs font-black uppercase text-slate-500">{order.inventoryStatus || 'Not Reserved'}</td>
+                              <td className="px-8 py-5 text-sm font-bold text-blue-600">{canViewQuotePrice ? formatMoney(order.total) : 'Restricted'}</td>
+                              <td className="px-8 py-5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => openOrderDetail(order.id)}
+                                  className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                                >
+                                  View Order
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {selectedCustomerOrders.length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="py-12 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No linked orders</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -2550,19 +2934,28 @@ const App: React.FC = () => {
                           {quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : '—'}
                         </td>
                         <td className="px-8 py-6">
-                          {quote.status === 'Accepted' && canConvertQuotes && (
+                          <div className="flex flex-wrap items-center gap-2">
                             <button
-                              onClick={() => handleConvertQuoteToOrder(quote)}
-                              className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm shadow-blue-100 hover:bg-blue-700 transition-all"
+                              type="button"
+                              onClick={() => openQuoteDetail(quote.id)}
+                              className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
                             >
-                              Convert to Order
+                              View Detail
                             </button>
-                          )}
-                          {quote.status === 'Converted' && (
-                            <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">
-                              Converted
-                            </span>
-                          )}
+                            {quote.status === 'Accepted' && canConvertQuotes && (
+                              <button
+                                onClick={() => handleConvertQuoteToOrder(quote)}
+                                className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-sm shadow-blue-100 hover:bg-blue-700 transition-all"
+                              >
+                                Convert to Order
+                              </button>
+                            )}
+                            {quote.status === 'Converted' && (
+                              <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">
+                                Converted
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2576,6 +2969,194 @@ const App: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {activeView === 'QuoteDetail' && (
+            <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
+              {!selectedQuoteDetail ? (
+                <div className="space-y-6">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('Quotes')}
+                    className="no-print px-5 py-3 rounded-2xl bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                  >
+                    Back to Quotes
+                  </button>
+                  <div>No quote selected.</div>
+                </div>
+              ) : (
+                <>
+                  <div className="no-print flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black tracking-tight">{selectedQuoteDetail.quoteNumber}</h3>
+                      <p className="text-sm font-bold text-slate-500 mt-1">
+                        {selectedQuoteDetail.customerName || selectedQuoteCustomer?.displayName || 'Quote'}
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <span className="px-3 py-1 rounded-full bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                          {selectedQuoteDetail.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveView('Quotes')}
+                        className="px-5 py-3 rounded-2xl bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                      >
+                        Back to Quotes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePrintQuote}
+                        className="px-5 py-3 rounded-2xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all"
+                      >
+                        Print Quote
+                      </button>
+                      {selectedQuoteDetail.status === 'Draft' && (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkQuoteAsSent(selectedQuoteDetail.id)}
+                          className="px-5 py-3 rounded-2xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all"
+                        >
+                          Mark as Sent
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div id="quote-print-area" className="quote-print-area bg-white text-slate-900 rounded-[40px] border border-slate-200 shadow-sm p-10 space-y-10">
+                    <div className="flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-6">
+                      <div>
+                        <p className="text-xl font-black tracking-tight">51Wood Portal</p>
+                        <p className="text-3xl font-black mt-1">Quote</p>
+                      </div>
+                      <div className="text-sm font-bold text-slate-600 text-right space-y-1">
+                        <p>51wood</p>
+                        <p>info@51wood.ca</p>
+                        <p>www.51wood.ca</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quote Info</h4>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <p className="font-bold text-slate-400">Quote Number</p>
+                          <p className="font-black">{selectedQuoteDetail.quoteNumber}</p>
+                          <p className="font-bold text-slate-400">Quote Date</p>
+                          <p className="font-black">{formatDate(selectedQuoteDetail.createdAt) || '—'}</p>
+                          <p className="font-bold text-slate-400">Status</p>
+                          <p className="font-black uppercase">{selectedQuoteDetail.status}</p>
+                          <p className="font-bold text-slate-400">Store</p>
+                          <p className="font-black">{getStoreName(selectedQuoteDetail.storeId) || '—'}</p>
+                          <p className="font-bold text-slate-400">Manager</p>
+                          <p className="font-black">{selectedQuoteDetail.managerName || '—'}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Customer Info</h4>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <p className="font-bold text-slate-400">Customer Name</p>
+                          <p className="font-black">
+                            {selectedQuoteDetail.customerName || selectedQuoteCustomer?.displayName || selectedQuoteLead?.customerName || '—'}
+                          </p>
+                          <p className="font-bold text-slate-400">Phone</p>
+                          <p className="font-black">
+                            {canViewCustomerPhone
+                              ? (selectedQuoteDetail.customerPhone || selectedQuoteCustomer?.phone || selectedQuoteLead?.phone || '—')
+                              : 'Restricted'}
+                          </p>
+                          <p className="font-bold text-slate-400">Email</p>
+                          <p className="font-black">
+                            {canViewCustomerEmail
+                              ? (selectedQuoteDetail.customerEmail || selectedQuoteCustomer?.email || selectedQuoteLead?.email || '—')
+                              : 'Restricted'}
+                          </p>
+                          <p className="font-bold text-slate-400">Project Address</p>
+                          <p className="font-black">
+                            {canViewCustomerAddress
+                              ? (selectedQuoteDetail.projectAddress || selectedQuoteLead?.projectAddress || selectedQuoteCustomer?.address || '—')
+                              : 'Restricted'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Line Items</h4>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>SKU</th>
+                            <th>Product</th>
+                            <th>Category</th>
+                            <th>Unit</th>
+                            <th>Qty</th>
+                            <th>Unit Price</th>
+                            <th>Line Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(selectedQuoteDetail.lineItems || []).map((item, index) => (
+                            <tr key={`${item.productId || item.sku}-${index}`}>
+                              <td>{item.sku}</td>
+                              <td>{item.name}</td>
+                              <td>{item.category}</td>
+                              <td>{item.unit}</td>
+                              <td>{item.quantity}</td>
+                              <td>{canViewQuotePrice ? formatMoney(item.base_price) : 'Restricted'}</td>
+                              <td>{canViewQuotePrice ? formatMoney(item.lineTotal) : 'Restricted'}</td>
+                            </tr>
+                          ))}
+                          {(selectedQuoteDetail.lineItems || []).length === 0 && (
+                            <tr>
+                              <td colSpan={7}>No line items</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <div className="w-full max-w-sm space-y-2 text-sm">
+                        <div className="flex justify-between gap-8">
+                          <span className="font-bold text-slate-400 uppercase tracking-widest text-[10px]">Subtotal</span>
+                          <span className="font-black">{canViewQuotePrice ? formatMoney(selectedQuoteDetail.subtotal) : 'Restricted'}</span>
+                        </div>
+                        <div className="flex justify-between gap-8">
+                          <span className="font-bold text-slate-400 uppercase tracking-widest text-[10px]">Discount</span>
+                          <span className="font-black">{canViewQuotePrice ? formatMoney(selectedQuoteDetail.discount) : 'Restricted'}</span>
+                        </div>
+                        <div className="flex justify-between gap-8">
+                          <span className="font-bold text-slate-400 uppercase tracking-widest text-[10px]">Tax Rate</span>
+                          <span className="font-black">{canViewQuotePrice ? formatTaxRate(selectedQuoteDetail.taxRate) : 'Restricted'}</span>
+                        </div>
+                        <div className="flex justify-between gap-8">
+                          <span className="font-bold text-slate-400 uppercase tracking-widest text-[10px]">Tax Amount</span>
+                          <span className="font-black">{canViewQuotePrice ? formatMoney(selectedQuoteDetail.taxAmount) : 'Restricted'}</span>
+                        </div>
+                        <div className="flex justify-between gap-8 border-t border-slate-200 pt-3">
+                          <span className="font-black uppercase tracking-widest text-xs">Total</span>
+                          <span className="font-black text-lg">{canViewQuotePrice ? formatMoney(selectedQuoteDetail.total) : 'Restricted'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {selectedQuoteDetail.notes && (
+                      <div>
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Notes</h4>
+                        <p className="text-sm font-medium text-slate-600 whitespace-pre-wrap">{selectedQuoteDetail.notes}</p>
+                      </div>
+                    )}
+
+                    <p className="text-sm font-bold text-slate-500 border-t border-slate-200 pt-6">
+                      Thank you for choosing 51wood.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -3447,6 +4028,7 @@ const App: React.FC = () => {
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Production</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Inventory</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Total</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -3531,11 +4113,20 @@ const App: React.FC = () => {
                             )}
                           </td>
                           <td className="px-8 py-6 text-right font-black text-blue-600 text-sm">${order.total.toFixed(2)}</td>
+                          <td className="px-8 py-6 text-right">
+                            <button
+                              type="button"
+                              onClick={() => openOrderDetail(order.id)}
+                              className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                            >
+                              View Detail
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     {firestoreOrders.length === 0 && !ordersLoading && (
                       <tr>
-                        <td colSpan={7} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                        <td colSpan={8} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
                           No live orders yet. Convert an accepted quote to create the first order.
                         </td>
                       </tr>
@@ -3543,6 +4134,235 @@ const App: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {activeView === 'OrderDetail' && (
+            <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+              {!selectedOrderDetail ? (
+                <div className="space-y-6">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('Orders')}
+                    className="px-5 py-3 rounded-2xl bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                  >
+                    Back to Orders
+                  </button>
+                  <div className="bg-white rounded-[40px] border border-dashed border-slate-200 py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
+                    No order selected.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black tracking-tight">{selectedOrderDetail.orderNumber}</h3>
+                      <p className="text-sm font-bold text-slate-500 mt-1">{selectedOrderDetail.customerName}</p>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <span className="px-3 py-1 rounded-full bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">{selectedOrderDetail.status}</span>
+                        <span className="px-3 py-1 rounded-full bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">{canViewOrderPayment ? selectedOrderDetail.paymentStatus : 'Restricted'}</span>
+                        <span className="px-3 py-1 rounded-full bg-blue-50 text-[9px] font-black uppercase tracking-widest text-blue-600">{selectedOrderDetail.productionStatus}</span>
+                        <span className="px-3 py-1 rounded-full bg-amber-50 text-[9px] font-black uppercase tracking-widest text-amber-700">{selectedOrderDetail.inventoryStatus || 'Not Reserved'}</span>
+                      </div>
+                    </div>
+                    <div className="text-right space-y-3">
+                      <p className="text-2xl font-black text-blue-600">{canViewQuotePrice ? formatMoney(selectedOrderDetail.total) : 'Restricted'}</p>
+                      <button
+                        type="button"
+                        onClick={() => setActiveView('Orders')}
+                        className="px-5 py-3 rounded-2xl bg-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                      >
+                        Back to Orders
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8 space-y-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Customer / Project</h4>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openCustomerLeadDetail({
+                            leadId: selectedOrderDetail.leadId,
+                            customerId: selectedOrderDetail.customerId,
+                          })
+                        }
+                        className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                      >
+                        View Customer
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Customer</p>
+                        <p className="text-sm font-black text-slate-800 mt-1">{selectedOrderDetail.customerName}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Phone</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerPhone ? (selectedOrderDetail.customerPhone || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerEmail ? (selectedOrderDetail.customerEmail || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Project Address</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{canViewCustomerAddress ? (selectedOrderDetail.projectAddress || '—') : 'Restricted'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Store</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{getStoreName(selectedOrderDetail.storeId) || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Manager</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedOrderDetail.managerName || '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8 space-y-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Quote Link</h4>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const quoteId = selectedOrderQuote?.id || selectedOrderDetail.quoteId;
+                          if (quoteId) {
+                            openQuoteDetail(quoteId);
+                          } else {
+                            setActiveView('Quotes');
+                          }
+                        }}
+                        className="px-3 py-2 rounded-xl bg-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-all"
+                      >
+                        {selectedOrderQuote?.id || selectedOrderDetail.quoteId ? 'View Quote' : 'Open Quotes'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quote Number</p>
+                        <p className="text-sm font-black text-slate-800 mt-1">{selectedOrderQuote?.quoteNumber || selectedOrderDetail.quoteNumber || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quote Status</p>
+                        <p className="text-sm font-bold text-slate-600 mt-1">{selectedOrderQuote?.status || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quote Total</p>
+                        <p className="text-sm font-black text-blue-600 mt-1">{canViewQuotePrice ? formatMoney(selectedOrderQuote?.total ?? selectedOrderDetail.total) : 'Restricted'}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-8 py-6 border-b border-slate-100">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Order Line Items</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b">
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">SKU</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Product</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Category</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Unit</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-center">Qty</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-right">Unit Price</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-right">Line Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(selectedOrderDetail.lineItems || []).map((item, index) => (
+                            <tr key={`${item.productId || item.sku}-${index}`}>
+                              <td className="px-8 py-5 text-xs font-bold uppercase text-slate-500">{item.sku}</td>
+                              <td className="px-8 py-5 text-sm font-black">{item.name}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500">{item.category}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500">{item.unit}</td>
+                              <td className="px-8 py-5 text-center text-sm font-black">{item.quantity}</td>
+                              <td className="px-8 py-5 text-right text-sm font-bold text-slate-600">{canViewQuotePrice ? formatMoney(item.base_price) : 'Restricted'}</td>
+                              <td className="px-8 py-5 text-right text-sm font-black text-blue-600">{canViewQuotePrice ? formatMoney(item.lineTotal) : 'Restricted'}</td>
+                            </tr>
+                          ))}
+                          {(selectedOrderDetail.lineItems || []).length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="py-12 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No line items</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Production Tasks</h4>
+                      <span className="px-3 py-1 rounded-full bg-blue-50 text-[9px] font-black uppercase tracking-widest text-blue-600">
+                        {selectedOrderProductionTask?.status || 'Not Started'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(selectedOrderProductionTask?.tasks || []).map((task) => (
+                        <div key={task.id} className={`p-5 rounded-3xl border ${task.isComplete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100 bg-slate-50/50'}`}>
+                          <p className={`text-sm font-black ${task.isComplete ? 'text-emerald-600 line-through' : 'text-slate-800'}`}>{task.taskName}</p>
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">{task.taskType}</p>
+                          <p className="text-[10px] font-bold text-slate-500 mt-3">Assigned: {task.assignedTeamMemberName || 'Unassigned'}</p>
+                          <p className="text-[10px] font-bold text-slate-500">Signed: {task.signedBy || '—'}</p>
+                          <p className="text-[10px] font-medium text-slate-400 mt-2">{task.notes || 'No notes'}</p>
+                          <p className="text-[9px] font-black uppercase tracking-widest mt-3">{task.isComplete ? 'Complete' : 'Not complete'}</p>
+                        </div>
+                      ))}
+                      {(!selectedOrderProductionTask || selectedOrderProductionTask.tasks.length === 0) && (
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No production tasks for this order.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-8 py-6 border-b border-slate-100">
+                      <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Inventory Movements</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b">
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Type</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Product</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-center">Qty</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-center">Previous</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400 text-center">New</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Created</th>
+                            <th className="px-8 py-4 text-[10px] font-black uppercase text-slate-400">Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {selectedOrderStockMovements.map((movement) => (
+                            <tr key={movement.id}>
+                              <td className="px-8 py-5 text-xs font-black uppercase text-slate-500">{movement.movementType}</td>
+                              <td className="px-8 py-5 text-sm font-black">{movement.productName}</td>
+                              <td className="px-8 py-5 text-center text-sm font-black">{movement.quantity}</td>
+                              <td className="px-8 py-5 text-center text-sm font-bold text-slate-500">{movement.previousStock}</td>
+                              <td className="px-8 py-5 text-center text-sm font-black">{movement.newStock}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-400">{formatDate(movement.createdAt) || '—'}</td>
+                              <td className="px-8 py-5 text-xs font-medium text-slate-400">{movement.notes || '—'}</td>
+                            </tr>
+                          ))}
+                          {selectedOrderStockMovements.length === 0 && (
+                            <tr>
+                              <td colSpan={7} className="py-12 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No stock movements yet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm p-8">
+                    <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Internal Notes</h4>
+                    <p className="text-sm font-medium text-slate-500 mt-3">{selectedOrderDetail.notes || 'No internal notes.'}</p>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

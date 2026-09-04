@@ -20,3 +20,65 @@ body {
     transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
     transition-duration: 150ms;
 }
+
+.quote-print-area table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.quote-print-area th,
+.quote-print-area td {
+    border: 1px solid #cbd5e1;
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 13px;
+}
+
+.quote-print-area th {
+    background: #f8fafc;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+}
+
+@media print {
+    html,
+    body,
+    #root {
+        background: white !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    body * {
+        visibility: hidden !important;
+    }
+
+    #quote-print-area,
+    #quote-print-area * {
+        visibility: visible !important;
+    }
+
+    #quote-print-area {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        padding: 32px !important;
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        background: white !important;
+        color: #0f172a !important;
+    }
+
+    .no-print {
+        display: none !important;
+    }
+
+    @page {
+        size: auto;
+        margin: 16mm;
+    }
+}
