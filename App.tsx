@@ -42,7 +42,8 @@ import {
   Play,
   Clock,
   LogIn,
-  Key
+  Key,
+  MessageSquare
 } from 'lucide-react';
 import { 
   Order, 
@@ -70,9 +71,12 @@ import {
   PaymentStatus,
   ProductionStatus,
   StockMovement,
+  StockMovementType,
   ERPFile,
   FileCategory,
   FileEntityType,
+  TaskComment,
+  TaskPriority,
 } from './types';
 import { 
   INITIAL_USERS, 
@@ -112,6 +116,7 @@ import {
   updateProductionTaskItems,
 } from './services/orderService';
 import {
+  applyProductStockMovement,
   deductStockForOrder,
   getStockMovements,
   reserveStockForOrder,
@@ -354,6 +359,47 @@ const formatDate = (value?: string) => {
   return date.toLocaleDateString();
 };
 
+const TASK_PRIORITIES: TaskPriority[] = ['Low', 'Normal', 'High', 'Urgent'];
+
+const getTaskPriorityClasses = (priority?: TaskPriority) => {
+  const value = priority || 'Normal';
+
+  if (value === 'Urgent') return 'bg-red-50 text-red-700 border-red-200';
+  if (value === 'High') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (value === 'Low') return 'bg-slate-50 text-slate-500 border-slate-200';
+  return 'bg-blue-50 text-blue-700 border-blue-200';
+};
+
+const isDateOverdue = (dateValue?: string) => {
+  if (!dateValue) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const date = new Date(dateValue);
+  date.setHours(0, 0, 0, 0);
+  return date < today;
+};
+
+const isDateToday = (dateValue?: string) => {
+  if (!dateValue) return false;
+  const today = new Date();
+  const date = new Date(dateValue);
+  return date.toDateString() === today.toDateString();
+};
+
+const isDateThisWeek = (dateValue?: string) => {
+  if (!dateValue) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const date = new Date(dateValue);
+  date.setHours(0, 0, 0, 0);
+  const sevenDaysFromNow = new Date(today);
+  sevenDaysFromNow.setDate(today.getDate() + 7);
+  return date >= today && date <= sevenDaysFromNow;
+};
+
+const getTaskCommentKey = (productionTaskId: string, taskItemId: string) =>
+  `${productionTaskId}-${taskItemId}`;
+
 const formatTaxRate = (value?: number) => {
   return `${(Number(value || 0) * 100).toLocaleString(undefined, {
     minimumFractionDigits: 0,
@@ -381,6 +427,15 @@ const App: React.FC = () => {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [stockMovementsLoading, setStockMovementsLoading] = useState(false);
   const [stockMovementsError, setStockMovementsError] = useState('');
+  const [showInventoryMovementModal, setShowInventoryMovementModal] = useState(false);
+  const [selectedInventoryProductId, setSelectedInventoryProductId] = useState('');
+  const [inventoryMovementType, setInventoryMovementType] = useState<'Received' | 'Adjusted' | 'Returned' | 'Damaged'>('Received');
+  const [inventoryMovementQuantity, setInventoryMovementQuantity] = useState('1');
+  const [inventoryAdjustedCount, setInventoryAdjustedCount] = useState('0');
+  const [inventoryMovementNotes, setInventoryMovementNotes] = useState('');
+  const [inventoryMovementLoading, setInventoryMovementLoading] = useState(false);
+  const [movementTypeFilter, setMovementTypeFilter] = useState<StockMovementType | 'All'>('All');
+  const [movementProductFilter, setMovementProductFilter] = useState('All');
   const [erpFiles, setErpFiles] = useState<ERPFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState('');
@@ -674,6 +729,11 @@ const App: React.FC = () => {
 
   // --- Task Manager Filter ---
   const [tmFilter, setTmFilter] = useState<string>('All');
+  const [taskAssigneeFilter, setTaskAssigneeFilter] = useState('All');
+  const [taskPriorityFilter, setTaskPriorityFilter] = useState<TaskPriority | 'All'>('All');
+  const [taskDueFilter, setTaskDueFilter] = useState<'All' | 'Overdue' | 'Due Today' | 'This Week' | 'No Due Date'>('All');
+  const [expandedTaskComments, setExpandedTaskComments] = useState<Record<string, boolean>>({});
+  const [newTaskComments, setNewTaskComments] = useState<Record<string, string>>({});
 
   // --- Quote Workflow State ---
   const [quoteStep, setQuoteStep] = useState<1 | 2>(1);
@@ -1526,6 +1586,66 @@ const App: React.FC = () => {
     );
   };
 
+  const handleTaskPriorityChange = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItemId: string,
+    priority: TaskPriority
+  ) => {
+    await handleUpdateProductionTaskItem(productionTaskId, orderId, taskItemId, {
+      priority,
+    });
+  };
+
+  const handleTaskDueDateChange = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItemId: string,
+    dueDate: string
+  ) => {
+    await handleUpdateProductionTaskItem(productionTaskId, orderId, taskItemId, {
+      dueDate,
+    });
+  };
+
+  const handleStartTask = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItemId: string
+  ) => {
+    await handleUpdateProductionTaskItem(productionTaskId, orderId, taskItemId, {
+      startedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleAddTaskComment = async (
+    productionTaskId: string,
+    orderId: string,
+    taskItem: FirestoreTaskItem
+  ) => {
+    const key = getTaskCommentKey(productionTaskId, taskItem.id);
+    const text = newTaskComments[key]?.trim();
+
+    if (!text) return;
+
+    const nextComment: TaskComment = {
+      id: `${Date.now()}`,
+      text,
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser?.id || '',
+      createdByName: currentUser?.name || '',
+    };
+
+    await handleUpdateProductionTaskItem(productionTaskId, orderId, taskItem.id, {
+      comments: [...(taskItem.comments || []), nextComment],
+    });
+
+    setNewTaskComments((prev) => ({
+      ...prev,
+      [key]: '',
+    }));
+  };
+
   const handleDraftProductionTaskItem = (
     productionTaskId: string,
     taskItemId: string,
@@ -1891,6 +2011,39 @@ const App: React.FC = () => {
     });
   }, [dbProducts, inventorySearch, inventoryCategory]);
 
+  const filteredStockMovements = useMemo(() => {
+    return stockMovements.filter((movement) => {
+      if (movementTypeFilter !== 'All' && movement.movementType !== movementTypeFilter) {
+        return false;
+      }
+
+      if (movementProductFilter !== 'All' && movement.productId !== movementProductFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [stockMovements, movementTypeFilter, movementProductFilter]);
+
+  const reorderProducts = useMemo(() => {
+    return dbProducts
+      .filter((product) => Number(product.stockLevel || 0) <= Number(product.minStock || 0))
+      .map((product) => {
+        const minStock = Number(product.minStock || 0);
+        const stockLevel = Number(product.stockLevel || 0);
+        const suggestedReorderQty = Math.max(minStock * 2 - stockLevel, minStock);
+
+        return {
+          ...product,
+          suggestedReorderQty,
+        };
+      });
+  }, [dbProducts]);
+
+  const selectedInventoryProduct = useMemo(() => {
+    return dbProducts.find((product) => product.id === selectedInventoryProductId) || null;
+  }, [dbProducts, selectedInventoryProductId]);
+
   const filteredTasks = useMemo(() => {
     // Filter tasks based on store scope if manager
     return dbOrders.filter(o => {
@@ -1901,12 +2054,93 @@ const App: React.FC = () => {
   }, [dbOrders, tmFilter, currentUser]);
 
   const filteredFirestoreProductionTasks = useMemo(() => {
-    return firestoreProductionTasks.filter((task) => {
-      const matchesStatus = tmFilter === 'All' || task.status === tmFilter;
-      const matchesStore = !currentUser?.storeId || task.storeId === currentUser.storeId;
-      return matchesStatus && matchesStore;
-    });
-  }, [firestoreProductionTasks, tmFilter, currentUser]);
+    return firestoreProductionTasks
+      .filter((productionTask) => {
+        const matchesStore = !currentUser?.storeId || productionTask.storeId === currentUser.storeId;
+        return matchesStore;
+      })
+      .map((productionTask) => {
+        const matchingTasks = productionTask.tasks.filter((task) => {
+          if (tmFilter !== 'All' && productionTask.status !== tmFilter) {
+            return false;
+          }
+
+          if (
+            taskAssigneeFilter !== 'All' &&
+            (task.assignedTeamMemberId || '') !== taskAssigneeFilter
+          ) {
+            return false;
+          }
+
+          if (
+            taskPriorityFilter !== 'All' &&
+            (task.priority || 'Normal') !== taskPriorityFilter
+          ) {
+            return false;
+          }
+
+          if (taskDueFilter === 'Overdue' && !isDateOverdue(task.dueDate)) {
+            return false;
+          }
+
+          if (taskDueFilter === 'Due Today' && !isDateToday(task.dueDate)) {
+            return false;
+          }
+
+          if (taskDueFilter === 'This Week' && !isDateThisWeek(task.dueDate)) {
+            return false;
+          }
+
+          if (taskDueFilter === 'No Due Date' && task.dueDate) {
+            return false;
+          }
+
+          return true;
+        });
+
+        return {
+          ...productionTask,
+          tasks: matchingTasks,
+        };
+      })
+      .filter((productionTask) => productionTask.tasks.length > 0);
+  }, [
+    firestoreProductionTasks,
+    tmFilter,
+    taskAssigneeFilter,
+    taskPriorityFilter,
+    taskDueFilter,
+    currentUser,
+  ]);
+
+  const currentTeamMember = useMemo(() => {
+    return dbTeamMembers.find(
+      (member) =>
+        member.linkedUserId === currentUser?.id ||
+        member.email?.toLowerCase() === currentUser?.email?.toLowerCase()
+    );
+  }, [dbTeamMembers, currentUser]);
+
+  const productionBottlenecks = useMemo(() => {
+    const scopedTasks = firestoreProductionTasks.filter(
+      (productionTask) => !currentUser?.storeId || productionTask.storeId === currentUser.storeId
+    );
+    const allTasks = scopedTasks.flatMap((productionTask) =>
+      productionTask.tasks.map((task) => ({
+        ...task,
+        productionTaskId: productionTask.id,
+        orderNumber: productionTask.orderNumber,
+        customerName: productionTask.customerName,
+      }))
+    );
+
+    return {
+      overdue: allTasks.filter((task) => !task.isComplete && isDateOverdue(task.dueDate)).length,
+      urgent: allTasks.filter((task) => !task.isComplete && task.priority === 'Urgent').length,
+      unassigned: allTasks.filter((task) => !task.isComplete && !task.assignedTeamMemberId).length,
+      inProgress: allTasks.filter((task) => !task.isComplete && task.startedAt).length,
+    };
+  }, [firestoreProductionTasks, currentUser]);
 
   const filteredLeads = useMemo(() => {
     return dbLeads.filter((lead) => {
@@ -2314,6 +2548,80 @@ const App: React.FC = () => {
       alert(err?.message || 'Could not deduct stock.');
     } finally {
       setInventoryActionLoadingOrderId(null);
+    }
+  };
+
+  const openInventoryMovementModal = (
+    productId: string,
+    type: 'Received' | 'Adjusted' | 'Returned' | 'Damaged'
+  ) => {
+    const product = dbProducts.find((item) => item.id === productId);
+
+    setSelectedInventoryProductId(productId);
+    setInventoryMovementType(type);
+    setInventoryMovementQuantity('1');
+    setInventoryAdjustedCount(String(product?.stockLevel || 0));
+    setInventoryMovementNotes('');
+    setShowInventoryMovementModal(true);
+  };
+
+  const handleSubmitInventoryMovement = async () => {
+    if (!canManageInventory) {
+      alert('You do not have permission to update inventory.');
+      return;
+    }
+
+    if (!selectedInventoryProductId) {
+      alert('No product selected.');
+      return;
+    }
+
+    setInventoryMovementLoading(true);
+
+    try {
+      await applyProductStockMovement({
+        productId: selectedInventoryProductId,
+        movementType: inventoryMovementType,
+        quantity: Number(inventoryMovementQuantity || 0),
+        newCount: Number(inventoryAdjustedCount || 0),
+        notes: inventoryMovementNotes,
+        createdBy: currentUser?.id || '',
+      });
+
+      await Promise.all([
+        loadProducts(),
+        loadStockMovements(),
+      ]);
+
+      setShowInventoryMovementModal(false);
+      alert('Inventory updated successfully.');
+    } catch (err: any) {
+      console.error('Failed to update inventory:', err);
+      alert(err?.message || 'Could not update inventory.');
+    } finally {
+      setInventoryMovementLoading(false);
+    }
+  };
+
+  const handleUpdateProductSupplier = async (productId: string, supplier: string) => {
+    if (!canManageInventory) {
+      alert('You do not have permission to update inventory.');
+      return;
+    }
+
+    const product = dbProducts.find((item) => item.id === productId);
+    if (!product) return;
+
+    const nextSupplier = supplier.trim();
+    if ((product.supplier || '') === nextSupplier) return;
+
+    try {
+      await saveProduct({ ...product, supplier: nextSupplier });
+      await loadProducts();
+    } catch (err: any) {
+      console.error('Failed to update supplier:', err);
+      alert(err?.message || 'Could not update supplier.');
+      await loadProducts();
     }
   };
 
@@ -4031,6 +4339,86 @@ const App: React.FC = () => {
                   </div>
                </div>
 
+               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                 {[
+                   { label: 'Overdue', value: productionBottlenecks.overdue, tone: 'text-red-600 bg-red-50 border-red-100' },
+                   { label: 'Urgent', value: productionBottlenecks.urgent, tone: 'text-amber-700 bg-amber-50 border-amber-100' },
+                   { label: 'Unassigned', value: productionBottlenecks.unassigned, tone: 'text-slate-700 bg-slate-50 border-slate-200' },
+                   { label: 'In Progress', value: productionBottlenecks.inProgress, tone: 'text-blue-700 bg-blue-50 border-blue-100' },
+                 ].map((card) => (
+                   <div key={card.label} className={`rounded-[28px] border p-5 ${card.tone}`}>
+                     <p className="text-[10px] font-black uppercase tracking-widest">{card.label}</p>
+                     <p className="text-3xl font-black mt-2">{card.value}</p>
+                   </div>
+                 ))}
+               </div>
+
+               <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-[28px] border border-slate-200 shadow-sm">
+                  {currentUser && TASK_FOCUSED_ROLES.includes(currentUser.role) && currentTeamMember && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setTaskAssigneeFilter(currentTeamMember.id)}
+                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                          taskAssigneeFilter === currentTeamMember.id
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                            : 'bg-slate-50 text-slate-500 hover:text-blue-600'
+                        }`}
+                      >
+                        My Tasks
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTaskAssigneeFilter('All')}
+                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${
+                          taskAssigneeFilter === 'All'
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-100'
+                            : 'bg-slate-50 text-slate-500 hover:text-blue-600'
+                        }`}
+                      >
+                        All Assigned
+                      </button>
+                    </>
+                  )}
+                  <select
+                    value={taskAssigneeFilter}
+                    onChange={(e) => setTaskAssigneeFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[10px] font-bold outline-none"
+                  >
+                    <option value="All">All Assignees</option>
+                    {dbTeamMembers
+                      .filter((member) => member.status === 'Active')
+                      .map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.displayName} - {member.workerType}
+                        </option>
+                      ))}
+                  </select>
+                  <select
+                    value={taskPriorityFilter}
+                    onChange={(e) => setTaskPriorityFilter(e.target.value as TaskPriority | 'All')}
+                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[10px] font-bold outline-none"
+                  >
+                    <option value="All">All Priorities</option>
+                    {TASK_PRIORITIES.map((priority) => (
+                      <option key={priority} value={priority}>
+                        {priority}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={taskDueFilter}
+                    onChange={(e) => setTaskDueFilter(e.target.value as typeof taskDueFilter)}
+                    className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[10px] font-bold outline-none"
+                  >
+                    <option value="All">All Due Dates</option>
+                    <option value="Overdue">Overdue</option>
+                    <option value="Due Today">Due Today</option>
+                    <option value="This Week">This Week</option>
+                    <option value="No Due Date">No Due Date</option>
+                  </select>
+               </div>
+
                {ordersLoading && (
                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
                    Loading production tasks...
@@ -4053,8 +4441,10 @@ const App: React.FC = () => {
                    </div>
                  ) : (
                    filteredFirestoreProductionTasks.map((taskRecord) => {
-                     const progress = taskRecord.tasks.length > 0
-                       ? Math.round((taskRecord.tasks.filter((task) => task.isComplete).length / taskRecord.tasks.length) * 100)
+                     const originalTaskRecord = firestoreProductionTasks.find((item) => item.id === taskRecord.id);
+                     const progressSource = originalTaskRecord?.tasks || taskRecord.tasks;
+                     const progress = progressSource.length > 0
+                       ? Math.round((progressSource.filter((task) => task.isComplete).length / progressSource.length) * 100)
                        : 0;
 
                      return (
@@ -4077,7 +4467,7 @@ const App: React.FC = () => {
                              </div>
                           </div>
 
-                          <div className="p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                          <div className="p-8 bg-slate-50/50 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                              {taskRecord.tasks.map((task) => {
                                const assigneeOptions = getAssignableTeamMembers(task.taskType);
                                const assignedMember = dbTeamMembers.find((member) => member.id === task.assignedTeamMemberId);
@@ -4086,9 +4476,18 @@ const App: React.FC = () => {
                                    ? [assignedMember, ...assigneeOptions]
                                    : assigneeOptions;
                                const canCompleteThisTask = canCompleteProductionTasks;
+                               const commentKey = getTaskCommentKey(taskRecord.id, task.id);
+                               const commentsOpen = expandedTaskComments[commentKey] === true;
+                               const isOverdue = !task.isComplete && isDateOverdue(task.dueDate);
 
                                return (
-                               <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${task.isComplete ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-100'}`}>
+                               <div key={task.id} className={`p-5 rounded-3xl border bg-white shadow-sm transition-all ${
+                                 task.isComplete
+                                   ? 'border-emerald-200 bg-emerald-50/20'
+                                   : isOverdue
+                                     ? 'border-red-200 bg-red-50/30'
+                                     : 'border-slate-100'
+                               }`}>
                                   <div className="flex items-center gap-3 mb-3">
                                      <button
                                        type="button"
@@ -4107,7 +4506,17 @@ const App: React.FC = () => {
                                      </button>
                                      <span className={`text-[11px] font-black ${task.isComplete ? 'text-emerald-600 line-through' : 'text-slate-700'}`}>{task.taskName}</span>
                                   </div>
-                                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3">{task.taskType}</p>
+                                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">{task.taskType}</p>
+                                    <span className={`px-2 py-1 rounded-full border text-[8px] font-black uppercase tracking-widest ${getTaskPriorityClasses(task.priority)}`}>
+                                      {task.priority || 'Normal'}
+                                    </span>
+                                    {isOverdue && (
+                                      <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 text-[8px] font-black uppercase tracking-widest">
+                                        Overdue
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">
                                     Assigned: {task.assignedTeamMemberName || 'Unassigned'}
                                   </p>
@@ -4137,6 +4546,60 @@ const App: React.FC = () => {
                                       </option>
                                     ))}
                                   </select>
+                                  <div className="grid grid-cols-2 gap-2 mb-3">
+                                    <select
+                                      value={task.priority || 'Normal'}
+                                      disabled={!canAssignProductionTasks}
+                                      onChange={(e) =>
+                                        handleTaskPriorityChange(
+                                          taskRecord.id,
+                                          taskRecord.orderId,
+                                          task.id,
+                                          e.target.value as TaskPriority
+                                        )
+                                      }
+                                      className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-bold outline-none disabled:opacity-50"
+                                    >
+                                      {TASK_PRIORITIES.map((priority) => (
+                                        <option key={priority} value={priority}>
+                                          {priority}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      type="date"
+                                      value={task.dueDate || ''}
+                                      disabled={!canAssignProductionTasks}
+                                      onChange={(e) =>
+                                        handleTaskDueDateChange(
+                                          taskRecord.id,
+                                          taskRecord.orderId,
+                                          task.id,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] font-bold outline-none disabled:opacity-50"
+                                    />
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 mb-3">
+                                    {!task.startedAt && canCompleteThisTask ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleStartTask(taskRecord.id, taskRecord.orderId, task.id)
+                                        }
+                                        className="px-3 py-1.5 rounded-xl bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest hover:bg-blue-700"
+                                      >
+                                        Start
+                                      </button>
+                                    ) : task.startedAt ? (
+                                      <span className="text-[9px] font-black uppercase tracking-widest text-blue-600">
+                                        Started {formatDate(task.startedAt)}
+                                      </span>
+                                    ) : (
+                                      <span />
+                                    )}
+                                  </div>
                                   <input
                                     value={task.notes || ''}
                                     disabled={!canCompleteThisTask}
@@ -4158,7 +4621,7 @@ const App: React.FC = () => {
                                     placeholder="Notes..."
                                     className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[9px] font-bold outline-none mb-3 disabled:opacity-50"
                                   />
-                                  <div className="flex items-center justify-between">
+                                  <div className="flex items-center justify-between mb-3">
                                     <span className="text-[8px] font-black text-slate-300 uppercase">Worker Init</span>
                                     <input
                                       value={task.signedBy || ''}
@@ -4183,6 +4646,57 @@ const App: React.FC = () => {
                                       className="w-10 bg-white border border-slate-200 rounded-lg py-1.5 text-[9px] font-black text-center uppercase outline-none disabled:opacity-50"
                                     />
                                   </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedTaskComments((prev) => ({
+                                        ...prev,
+                                        [commentKey]: !commentsOpen,
+                                      }))
+                                    }
+                                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-blue-600"
+                                  >
+                                    <MessageSquare size={12} />
+                                    Comments ({task.comments?.length || 0})
+                                  </button>
+                                  {commentsOpen && (
+                                    <div className="mt-3 space-y-3">
+                                      {(task.comments || []).length === 0 ? (
+                                        <p className="text-[10px] font-bold text-slate-400">No comments yet.</p>
+                                      ) : (
+                                        (task.comments || []).map((comment) => (
+                                          <div key={comment.id} className="rounded-2xl bg-slate-50 border border-slate-100 p-3">
+                                            <p className="text-xs font-bold text-slate-700">{comment.text}</p>
+                                            <span className="block text-[9px] font-black uppercase tracking-widest text-slate-400 mt-2">
+                                              {comment.createdByName || 'Team'} · {formatDate(comment.createdAt) || '—'}
+                                            </span>
+                                          </div>
+                                        ))
+                                      )}
+                                      {canCompleteThisTask && (
+                                        <div className="flex gap-2">
+                                          <input
+                                            value={newTaskComments[commentKey] || ''}
+                                            onChange={(e) =>
+                                              setNewTaskComments((prev) => ({
+                                                ...prev,
+                                                [commentKey]: e.target.value,
+                                              }))
+                                            }
+                                            placeholder="Add comment..."
+                                            className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-[10px] font-bold outline-none"
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => handleAddTaskComment(taskRecord.id, taskRecord.orderId, task)}
+                                            className="px-3 py-2 rounded-xl bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest"
+                                          >
+                                            Add
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                </div>
                                );
                              })}
@@ -4460,6 +4974,7 @@ const App: React.FC = () => {
                     </div>
                     <div className="space-y-4 pt-6 border-t border-slate-100 text-xs font-bold">
                       <div className="flex justify-between text-slate-400 uppercase text-[9px]"><span>Category</span><span className="text-slate-900 font-black">{p.category}</span></div>
+                      <div className="flex justify-between text-slate-400 uppercase text-[9px]"><span>Supplier</span><span className="text-slate-900 font-black">{p.supplier || '—'}</span></div>
                       <div className="flex justify-between text-slate-400 uppercase text-[9px]"><span>Base Price</span><span className="text-blue-600 font-black">${p.base_price.toFixed(2)}</span></div>
                     </div>
                   </div>
@@ -4935,6 +5450,98 @@ const App: React.FC = () => {
                  </p>
                )}
 
+               {showInventoryMovementModal && selectedInventoryProduct && (
+                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6">
+                   <div className="w-full max-w-lg rounded-[32px] bg-white p-8 shadow-2xl">
+                     <div className="flex items-start justify-between gap-4 mb-6">
+                       <div>
+                         <h3 className="text-lg font-black uppercase tracking-widest">Inventory Movement</h3>
+                         <p className="text-sm font-black text-slate-800 mt-2">{selectedInventoryProduct.name}</p>
+                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">
+                           {selectedInventoryProduct.sku} · Current stock {selectedInventoryProduct.stockLevel}
+                         </p>
+                       </div>
+                       <button type="button" onClick={() => setShowInventoryMovementModal(false)} className="text-slate-300 hover:text-slate-600">
+                         <X size={18} />
+                       </button>
+                     </div>
+
+                     <div className="space-y-4">
+                       <div className="space-y-2">
+                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Movement Type</label>
+                         <select
+                           value={inventoryMovementType}
+                           onChange={(e) => {
+                             const nextType = e.target.value as 'Received' | 'Adjusted' | 'Returned' | 'Damaged';
+                             setInventoryMovementType(nextType);
+                             if (nextType === 'Adjusted') {
+                               setInventoryAdjustedCount(String(selectedInventoryProduct.stockLevel || 0));
+                             }
+                           }}
+                           className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold outline-none"
+                         >
+                           {['Received', 'Adjusted', 'Returned', 'Damaged'].map((type) => (
+                             <option key={type} value={type}>{type}</option>
+                           ))}
+                         </select>
+                       </div>
+
+                       {inventoryMovementType === 'Adjusted' ? (
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">New Stock Count</label>
+                           <input
+                             type="number"
+                             min="0"
+                             value={inventoryAdjustedCount}
+                             onChange={(e) => setInventoryAdjustedCount(e.target.value)}
+                             className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold outline-none"
+                           />
+                         </div>
+                       ) : (
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Quantity</label>
+                           <input
+                             type="number"
+                             min="1"
+                             value={inventoryMovementQuantity}
+                             onChange={(e) => setInventoryMovementQuantity(e.target.value)}
+                             className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold outline-none"
+                           />
+                         </div>
+                       )}
+
+                       <div className="space-y-2">
+                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Notes</label>
+                         <textarea
+                           value={inventoryMovementNotes}
+                           onChange={(e) => setInventoryMovementNotes(e.target.value)}
+                           className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-bold outline-none min-h-[90px]"
+                           placeholder="Optional warehouse note..."
+                         />
+                       </div>
+                     </div>
+
+                     <div className="flex justify-end gap-3 mt-8">
+                       <button
+                         type="button"
+                         onClick={() => setShowInventoryMovementModal(false)}
+                         className="px-6 py-3 rounded-xl font-bold text-xs text-slate-500"
+                       >
+                         Cancel
+                       </button>
+                       <button
+                         type="button"
+                         disabled={inventoryMovementLoading}
+                         onClick={handleSubmitInventoryMovement}
+                         className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest disabled:opacity-50"
+                       >
+                         {inventoryMovementLoading ? 'Saving...' : 'Save Movement'}
+                       </button>
+                     </div>
+                   </div>
+                 </div>
+               )}
+
                {/* Inventory Toolbar */}
                <div className="flex flex-wrap gap-4 items-center bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm">
                   <div className="flex-1 min-w-[300px] relative">
@@ -4962,20 +5569,82 @@ const App: React.FC = () => {
                </div>
 
                <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
-                  <table className="w-full text-left">
-                     <thead><tr className="bg-slate-50 border-b"><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product Ref</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Category</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Available Units</th><th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Value / Unit</th></tr></thead>
+                  <table className="w-full text-left min-w-[1100px]">
+                     <thead>
+                       <tr className="bg-slate-50 border-b">
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product Ref</th>
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Category</th>
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Supplier</th>
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Available Units</th>
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Min Stock</th>
+                         <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Value / Unit</th>
+                         {canManageInventory && (
+                           <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-right">Actions</th>
+                         )}
+                       </tr>
+                     </thead>
                      <tbody className="divide-y">
                         {filteredInventory.map(p => (
                           <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
                              <td className="px-8 py-6 font-black text-sm">{p.name} <span className="block text-[9px] text-slate-400 tracking-widest">{p.sku}</span></td>
                              <td className="px-8 py-6 text-xs font-bold text-slate-500 uppercase">{p.category}</td>
+                             <td className="px-8 py-6 text-xs font-bold text-slate-500">
+                               {canManageInventory ? (
+                                 <input
+                                   defaultValue={p.supplier || ''}
+                                   key={`${p.id}-${p.supplier || ''}`}
+                                   onBlur={(e) => {
+                                     void handleUpdateProductSupplier(p.id, e.target.value);
+                                   }}
+                                   className="w-full min-w-[120px] bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                                   placeholder="Supplier"
+                                 />
+                               ) : (
+                                 p.supplier || '—'
+                               )}
+                             </td>
                              <td className="px-8 py-6 text-center"><span className={`px-3 py-1 rounded-lg text-xs font-black ${p.stockLevel < p.minStock ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-900'}`}>{p.stockLevel}</span></td>
+                             <td className="px-8 py-6 text-center text-xs font-black text-slate-500">{p.minStock}</td>
                              <td className="px-8 py-6 text-right font-black text-blue-600">${p.base_price.toFixed(2)}</td>
+                             {canManageInventory && (
+                               <td className="px-8 py-6">
+                                 <div className="flex flex-wrap justify-end gap-2">
+                                   <button
+                                     type="button"
+                                     onClick={() => openInventoryMovementModal(p.id, 'Received')}
+                                     className="px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-[9px] font-black uppercase tracking-widest hover:bg-blue-100"
+                                   >
+                                     Receive
+                                   </button>
+                                   <button
+                                     type="button"
+                                     onClick={() => openInventoryMovementModal(p.id, 'Adjusted')}
+                                     className="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest hover:bg-slate-200"
+                                   >
+                                     Adjust
+                                   </button>
+                                   <button
+                                     type="button"
+                                     onClick={() => openInventoryMovementModal(p.id, 'Damaged')}
+                                     className="px-3 py-2 rounded-xl bg-red-50 text-red-600 text-[9px] font-black uppercase tracking-widest hover:bg-red-100"
+                                   >
+                                     Damaged
+                                   </button>
+                                   <button
+                                     type="button"
+                                     onClick={() => openInventoryMovementModal(p.id, 'Returned')}
+                                     className="px-3 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-[9px] font-black uppercase tracking-widest hover:bg-emerald-100"
+                                   >
+                                     Returned
+                                   </button>
+                                 </div>
+                               </td>
+                             )}
                           </tr>
                         ))}
                         {filteredInventory.length === 0 && (
                           <tr>
-                            <td colSpan={4} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No matching products found</td>
+                            <td colSpan={canManageInventory ? 7 : 6} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">No matching products found</td>
                           </tr>
                         )}
                      </tbody>
@@ -4984,8 +5653,71 @@ const App: React.FC = () => {
 
                <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
                   <div className="px-8 py-6 border-b border-slate-100">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Stock Movement History</h3>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Reserve and deduct records from live orders</p>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Reorder List</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Products at or below minimum stock</p>
+                  </div>
+                  {reorderProducts.length === 0 ? (
+                    <p className="px-8 py-10 text-[10px] font-bold uppercase tracking-widest text-slate-300 italic">No products need reorder.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[900px]">
+                        <thead>
+                          <tr className="bg-slate-50 border-b">
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Product</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">SKU</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase">Supplier</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Current</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Min</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase text-center">Suggested Reorder</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {reorderProducts.map((product) => (
+                            <tr key={product.id} className="hover:bg-slate-50/50">
+                              <td className="px-8 py-5 text-sm font-black text-slate-800">{product.name}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500 uppercase tracking-widest">{product.sku}</td>
+                              <td className="px-8 py-5 text-xs font-bold text-slate-500">{product.supplier || '—'}</td>
+                              <td className="px-8 py-5 text-center text-sm font-black text-red-600">{product.stockLevel}</td>
+                              <td className="px-8 py-5 text-center text-sm font-bold text-slate-500">{product.minStock}</td>
+                              <td className="px-8 py-5 text-center text-sm font-black text-blue-600">{product.suggestedReorderQty}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+               </div>
+
+               <div className="bg-white rounded-[40px] border shadow-sm overflow-hidden">
+                  <div className="px-8 py-6 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">Stock Movement History</h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Reserve, deduct, receive, adjust, return, and damage records</p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <select
+                        value={movementTypeFilter}
+                        onChange={(e) => setMovementTypeFilter(e.target.value as StockMovementType | 'All')}
+                        className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[10px] font-bold outline-none"
+                      >
+                        <option value="All">All Movement Types</option>
+                        {['Reserved', 'Deducted', 'Adjusted', 'Received', 'Returned', 'Damaged'].map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={movementProductFilter}
+                        onChange={(e) => setMovementProductFilter(e.target.value)}
+                        className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2 text-[10px] font-bold outline-none"
+                      >
+                        <option value="All">All Products</option>
+                        {dbProducts.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name} - {product.sku}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {stockMovementsLoading && (
@@ -5017,7 +5749,7 @@ const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y">
-                        {stockMovements.map((movement) => (
+                        {filteredStockMovements.map((movement) => (
                           <tr key={movement.id} className="hover:bg-slate-50/50 transition-colors">
                             <td className="px-8 py-5">
                               <span className={`inline-flex px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
@@ -5025,7 +5757,13 @@ const App: React.FC = () => {
                                   ? 'bg-emerald-50 text-emerald-700'
                                   : movement.movementType === 'Reserved'
                                     ? 'bg-amber-50 text-amber-700'
-                                    : 'bg-slate-50 text-slate-600'
+                                    : movement.movementType === 'Received'
+                                      ? 'bg-blue-50 text-blue-700'
+                                      : movement.movementType === 'Returned'
+                                        ? 'bg-teal-50 text-teal-700'
+                                        : movement.movementType === 'Damaged'
+                                          ? 'bg-red-50 text-red-700'
+                                          : 'bg-slate-50 text-slate-600'
                               }`}>
                                 {movement.movementType}
                               </span>
@@ -5043,10 +5781,10 @@ const App: React.FC = () => {
                             <td className="px-8 py-5 text-xs font-medium text-slate-400">{movement.notes || '—'}</td>
                           </tr>
                         ))}
-                        {!stockMovementsLoading && stockMovements.length === 0 && (
+                        {!stockMovementsLoading && filteredStockMovements.length === 0 && (
                           <tr>
                             <td colSpan={10} className="py-20 text-center text-slate-300 italic font-bold uppercase tracking-widest text-[10px]">
-                              No stock movements yet.
+                              {stockMovements.length === 0 ? 'No stock movements yet.' : 'No matching stock movements.'}
                             </td>
                           </tr>
                         )}

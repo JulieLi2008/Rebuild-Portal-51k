@@ -328,6 +328,20 @@ export type ProductionTaskType =
   | 'Quality'
   | 'Logistics';
 
+export type TaskPriority =
+  | 'Low'
+  | 'Normal'
+  | 'High'
+  | 'Urgent';
+
+export interface TaskComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  createdBy: string;
+  createdByName: string;
+}
+
 export interface FirestoreTaskItem {
   id: string;
   taskName: string;
@@ -338,6 +352,10 @@ export interface FirestoreTaskItem {
   signedBy?: string;
   notes?: string;
   completedAt?: string;
+  priority?: TaskPriority;
+  dueDate?: string;
+  startedAt?: string;
+  comments?: TaskComment[];
 }
 
 export interface FirestoreProductionTask {

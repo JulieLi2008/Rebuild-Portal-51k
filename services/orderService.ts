@@ -11,13 +11,15 @@ import {
 import {
   FirestoreOrder,
   FirestoreProductionTask,
+  FirestoreTaskItem,
   InventoryStatus,
   OrderStatusV2,
   PaymentStatus,
   ProductionStatus,
   ProductionTaskStatus,
   Quote,
-  FirestoreTaskItem,
+  TaskComment,
+  TaskPriority,
 } from '../types';
 import { db } from './firebase';
 
@@ -61,6 +63,32 @@ const normalizeOrder = (id: string, data: any): FirestoreOrder => ({
   createdBy: data.createdBy || '',
 });
 
+const normalizeTaskComment = (comment: any): TaskComment => ({
+  id: comment?.id || `${Date.now()}`,
+  text: comment?.text || '',
+  createdAt: normalizeDate(comment?.createdAt),
+  createdBy: comment?.createdBy || '',
+  createdByName: comment?.createdByName || '',
+});
+
+const normalizeTaskItem = (task: any): FirestoreTaskItem => ({
+  id: task?.id || '',
+  taskName: task?.taskName || '',
+  taskType: task?.taskType || 'Production',
+  isComplete: Boolean(task?.isComplete),
+  assignedTeamMemberId: task?.assignedTeamMemberId || '',
+  assignedTeamMemberName: task?.assignedTeamMemberName || '',
+  signedBy: task?.signedBy || '',
+  notes: task?.notes || '',
+  completedAt: normalizeDate(task?.completedAt),
+  priority: (task?.priority || 'Normal') as TaskPriority,
+  dueDate: task?.dueDate || '',
+  startedAt: normalizeDate(task?.startedAt) || task?.startedAt || '',
+  comments: Array.isArray(task?.comments)
+    ? task.comments.map((comment: any) => normalizeTaskComment(comment))
+    : [],
+});
+
 const normalizeProductionTask = (
   id: string,
   data: any
@@ -75,7 +103,9 @@ const normalizeProductionTask = (
   status: (data.status || 'Not Started') as ProductionTaskStatus,
   startedAt: normalizeDate(data.startedAt),
   completedAt: normalizeDate(data.completedAt),
-  tasks: Array.isArray(data.tasks) ? data.tasks : [],
+  tasks: Array.isArray(data.tasks)
+    ? data.tasks.map((task: any) => normalizeTaskItem(task))
+    : [],
   createdAt: normalizeDate(data.createdAt),
   updatedAt: normalizeDate(data.updatedAt),
   createdBy: data.createdBy || '',
@@ -136,10 +166,10 @@ const calculateProductionTaskStatus = (
 ): ProductionTaskStatus => {
   const completedCount = tasks.filter((task) => task.isComplete).length;
 
-  if (completedCount === 0) return 'Not Started';
-  if (completedCount === tasks.length) return 'Completed';
-  if (completedCount >= tasks.length - 1) return 'Quality Check';
-  return 'In Progress';
+  if (completedCount === tasks.length && tasks.length > 0) return 'Completed';
+  if (completedCount >= tasks.length - 1 && completedCount > 0) return 'Quality Check';
+  if (completedCount > 0 || tasks.some((task) => Boolean(task.startedAt))) return 'In Progress';
+  return 'Not Started';
 };
 
 const mapTaskStatusToOrderProductionStatus = (
@@ -224,6 +254,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-material-prep`,
@@ -235,6 +269,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-cutting`,
@@ -246,6 +284,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-edgebanding`,
@@ -257,6 +299,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-assembly`,
@@ -268,6 +314,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-quality-check`,
@@ -279,6 +329,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'Normal',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
     {
       id: `${orderId}-installation`,
@@ -290,6 +344,10 @@ export const buildDefaultProductionTasks = (
       signedBy: '',
       notes: '',
       completedAt: '',
+      priority: 'High',
+      dueDate: '',
+      startedAt: '',
+      comments: [],
     },
   ],
 });

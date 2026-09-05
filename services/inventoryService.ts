@@ -260,3 +260,91 @@ export const deductStockForOrder = async (
     });
   });
 };
+
+export const applyProductStockMovement = async ({
+  productId,
+  movementType,
+  quantity,
+  newCount,
+  notes,
+  createdBy,
+}: {
+  productId: string;
+  movementType: 'Received' | 'Adjusted' | 'Returned' | 'Damaged';
+  quantity?: number;
+  newCount?: number;
+  notes?: string;
+  createdBy: string;
+}) => {
+  const productRef = doc(db, PRODUCTS_COLLECTION, productId);
+  const movementRef = doc(collection(db, STOCK_MOVEMENTS_COLLECTION));
+
+  await runTransaction(db, async (transaction) => {
+    const productSnap = await transaction.get(productRef);
+
+    if (!productSnap.exists()) {
+      throw new Error('Product not found.');
+    }
+
+    const product = productSnap.data() as Product;
+    const previousStock = normalizeNumber(product.stockLevel);
+    const movementQuantity = normalizeNumber(quantity);
+
+    let nextStock = previousStock;
+    let movementQty = movementQuantity;
+
+    if (movementType === 'Received' || movementType === 'Returned') {
+      if (movementQuantity <= 0) {
+        throw new Error('Quantity must be greater than 0.');
+      }
+
+      nextStock = previousStock + movementQuantity;
+    }
+
+    if (movementType === 'Damaged') {
+      if (movementQuantity <= 0) {
+        throw new Error('Quantity must be greater than 0.');
+      }
+
+      if (previousStock < movementQuantity) {
+        throw new Error(
+          `Not enough stock. Available: ${previousStock}, requested: ${movementQuantity}.`
+        );
+      }
+
+      nextStock = previousStock - movementQuantity;
+    }
+
+    if (movementType === 'Adjusted') {
+      const adjustedCount = normalizeNumber(newCount);
+
+      if (adjustedCount < 0) {
+        throw new Error('Adjusted stock count cannot be negative.');
+      }
+
+      nextStock = adjustedCount;
+      movementQty = adjustedCount - previousStock;
+    }
+
+    transaction.update(productRef, {
+      stockLevel: nextStock,
+      updatedAt: serverTimestamp(),
+    });
+
+    transaction.set(movementRef, {
+      productId,
+      sku: product.sku || productId,
+      productName: product.name || '',
+      orderId: '',
+      orderNumber: '',
+      customerName: '',
+      movementType,
+      quantity: movementQty,
+      previousStock,
+      newStock: nextStock,
+      notes: notes || '',
+      createdAt: serverTimestamp(),
+      createdBy,
+    });
+  });
+};
