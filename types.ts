@@ -356,3 +356,38 @@ export interface FirestoreProductionTask {
   updatedAt: string;
   createdBy: string;
 }
+
+export type FileEntityType =
+  | 'customer'
+  | 'lead'
+  | 'quote'
+  | 'order'
+  | 'productionTask';
+
+export type FileCategory =
+  | 'Drawing'
+  | 'Design File'
+  | 'Site Photo'
+  | 'Measurement'
+  | 'Contract'
+  | 'Other';
+
+export interface ERPFile {
+  id: string;
+  fileName: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  storagePath: string;
+  downloadUrl: string;
+  entityType: FileEntityType;
+  entityId: string;
+  relatedCustomerId?: string;
+  relatedLeadId?: string;
+  relatedQuoteId?: string;
+  relatedOrderId?: string;
+  fileCategory: FileCategory;
+  notes?: string;
+  uploadedAt: string;
+  uploadedBy: string;
+}

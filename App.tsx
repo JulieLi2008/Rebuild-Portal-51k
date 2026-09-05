@@ -70,6 +70,9 @@ import {
   PaymentStatus,
   ProductionStatus,
   StockMovement,
+  ERPFile,
+  FileCategory,
+  FileEntityType,
 } from './types';
 import { 
   INITIAL_USERS, 
@@ -113,6 +116,10 @@ import {
   getStockMovements,
   reserveStockForOrder,
 } from './services/inventoryService';
+import {
+  getAllERPFiles,
+  uploadERPFile,
+} from './services/fileService';
 
 /**
  * LOGIN SCREEN COMPONENT
@@ -374,6 +381,10 @@ const App: React.FC = () => {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [stockMovementsLoading, setStockMovementsLoading] = useState(false);
   const [stockMovementsError, setStockMovementsError] = useState('');
+  const [erpFiles, setErpFiles] = useState<ERPFile[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState('');
+  const [uploadingFileFor, setUploadingFileFor] = useState<string | null>(null);
   const [inventoryActionLoadingOrderId, setInventoryActionLoadingOrderId] = useState<string | null>(null);
   const [dbTeamMembers, setDbTeamMembers] = useState<TeamMember[]>([]);
   const [teamMembersLoading, setTeamMembersLoading] = useState(false);
@@ -578,6 +589,21 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadERPFiles = useCallback(async () => {
+    setFilesLoading(true);
+    setFilesError('');
+
+    try {
+      const files = await getAllERPFiles();
+      setErpFiles(files);
+    } catch (err) {
+      console.error('Failed to load ERP files:', err);
+      setFilesError('Could not load files from Firebase.');
+    } finally {
+      setFilesLoading(false);
+    }
+  }, []);
+
   // --- Auth & Navigation ---
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -622,6 +648,7 @@ const App: React.FC = () => {
         await loadTeamMembers();
         await loadOrdersAndTasks();
         await loadStockMovements();
+        await loadERPFiles();
         setAuthLoading(false);
       } catch (err) {
         console.error('Failed to load user profile:', err);
@@ -632,7 +659,7 @@ const App: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers, loadOrdersAndTasks, loadStockMovements]);
+  }, [loadRoles, loadStores, loadProducts, loadCustomersAndLeads, loadQuotes, loadTeamMembers, loadOrdersAndTasks, loadStockMovements, loadERPFiles]);
 
   // --- Dashboard Filters ---
   const [dashFilterStore, setDashFilterStore] = useState('All');
@@ -795,6 +822,7 @@ const App: React.FC = () => {
     await loadTeamMembers();
     await loadOrdersAndTasks();
     await loadStockMovements();
+    await loadERPFiles();
   };
 
   const handleLogout = async () => {
@@ -1709,24 +1737,150 @@ const App: React.FC = () => {
 
   // --- Scoped Data Calculation ---
   const dashboardStats = useMemo(() => {
-    // If manager, force filter to their store
     const storeToFilter = currentUser?.storeId || dashFilterStore;
-    
-    const ordersForStats = dbOrders.filter(o => 
-      (storeToFilter === 'All' || o.store_id === storeToFilter)
+
+    const filterByStore = (storeId?: string) => {
+      return storeToFilter === 'All' || !storeToFilter || storeId === storeToFilter;
+    };
+
+    const quotesForStats = dbQuotes.filter((quote) =>
+      filterByStore(quote.storeId)
     );
 
-    const revenue = ordersForStats.reduce((sum, o) => sum + o.line_items.reduce((a, b) => a + (b.product.base_price * b.quantity), 0), 0);
-    const count = ordersForStats.length;
-    const inventoryVal = dbProducts.reduce((sum, p) => sum + (p.base_price * p.stockLevel), 0);
-    
-    const ordersPerStore = dbStores.map(s => ({
-      name: s.store_name,
-      count: dbOrders.filter(o => o.store_id === s.id).length
+    const ordersForStats = firestoreOrders.filter((order) =>
+      filterByStore(order.storeId)
+    );
+
+    const leadsForStats = dbLeads.filter((lead) =>
+      filterByStore(lead.assignedStoreId)
+    );
+
+    const tasksForStats = firestoreProductionTasks.filter((task) =>
+      filterByStore(task.storeId)
+    );
+
+    const teamForStats = dbTeamMembers.filter((member) =>
+      filterByStore(member.storeId)
+    );
+
+    const totalQuoteValue = quotesForStats.reduce(
+      (sum, quote) => sum + Number(quote.total || 0),
+      0
+    );
+
+    const acceptedQuoteValue = quotesForStats
+      .filter((quote) => quote.status === 'Accepted' || quote.status === 'Converted')
+      .reduce((sum, quote) => sum + Number(quote.total || 0), 0);
+
+    const activeOrders = ordersForStats.filter(
+      (order) => !['Completed', 'Cancelled'].includes(order.status)
+    );
+
+    const totalOrderRevenue = ordersForStats.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+
+    const unpaidOrders = ordersForStats.filter(
+      (order) => order.paymentStatus === 'Unpaid'
+    );
+
+    const inventoryValue = dbProducts.reduce(
+      (sum, product) =>
+        sum + Number(product.base_price || 0) * Number(product.stockLevel || 0),
+      0
+    );
+
+    const lowStockProducts = dbProducts.filter(
+      (product) => Number(product.stockLevel || 0) <= Number(product.minStock || 0)
+    );
+
+    const activeTeamMembers = teamForStats.filter(
+      (member) => member.status === 'Active'
+    );
+
+    const leadsByStatus = leadsForStats.reduce((acc, lead) => {
+      acc[lead.status] = (acc[lead.status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const productionStatusCounts = tasksForStats.reduce((acc, task) => {
+      acc[task.status] = (acc[task.status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const ordersPerStore = dbStores.map((store) => ({
+      name: store.store_name,
+      count: firestoreOrders.filter((order) => order.storeId === store.id).length,
     }));
-    
-    return { revenue, count, inventoryVal, ordersPerStore, ordersForStats };
-  }, [dbOrders, dbStores, dbProducts, currentUser, dashFilterStore]);
+
+    return {
+      totalQuoteValue,
+      acceptedQuoteValue,
+      activeOrderCount: activeOrders.length,
+      totalOrderRevenue,
+      unpaidOrderCount: unpaidOrders.length,
+      unpaidOrderValue: unpaidOrders.reduce(
+        (sum, order) => sum + Number(order.total || 0),
+        0
+      ),
+      inventoryValue,
+      lowStockCount: lowStockProducts.length,
+      lowStockProducts,
+      activeTeamCount: activeTeamMembers.length,
+      leadsByStatus,
+      productionStatusCounts,
+      ordersPerStore,
+      quotesForStats,
+      ordersForStats,
+      leadsForStats,
+      tasksForStats,
+    };
+  }, [
+    currentUser,
+    dashFilterStore,
+    dbQuotes,
+    firestoreOrders,
+    dbLeads,
+    firestoreProductionTasks,
+    dbProducts,
+    dbTeamMembers,
+    dbStores,
+  ]);
+
+  const recentActivity = useMemo(() => {
+    const quoteEvents = dashboardStats.quotesForStats.slice(0, 5).map((quote) => ({
+      id: `quote-${quote.id}`,
+      type: 'Quote',
+      label: `${quote.quoteNumber} - ${quote.customerName}`,
+      date: quote.createdAt,
+      status: quote.status,
+    }));
+
+    const orderEvents = dashboardStats.ordersForStats.slice(0, 5).map((order) => ({
+      id: `order-${order.id}`,
+      type: 'Order',
+      label: `${order.orderNumber} - ${order.customerName}`,
+      date: order.createdAt,
+      status: order.status,
+    }));
+
+    const movementEvents = stockMovements.slice(0, 5).map((movement) => ({
+      id: `movement-${movement.id}`,
+      type: 'Inventory',
+      label: `${movement.movementType} - ${movement.productName}`,
+      date: movement.createdAt,
+      status: movement.orderNumber || '',
+    }));
+
+    return [...quoteEvents, ...orderEvents, ...movementEvents]
+      .sort((a, b) => {
+        const aTime = new Date(a.date || '').getTime();
+        const bTime = new Date(b.date || '').getTime();
+        return bTime - aTime;
+      })
+      .slice(0, 8);
+  }, [dashboardStats, stockMovements]);
 
   const filteredInventory = useMemo(() => {
     return dbProducts.filter(p => {
@@ -1916,9 +2070,182 @@ const App: React.FC = () => {
     currentUser?.role === 'SuperAdmin' || hasPermission('view_quote_price');
   const canViewOrderPayment =
     currentUser?.role === 'SuperAdmin' || hasPermission('view_order_payment');
+  const canUploadFiles =
+    currentUser?.role === 'SuperAdmin' || hasPermission('upload_files');
+  const canViewDrawings =
+    currentUser?.role === 'SuperAdmin' ||
+    hasPermission('view_drawings') ||
+    hasPermission('view_design_files');
   const showExecutive = showAccessControl || showStores || canViewDataCenter;
   const showSales = showCustomersLeads || showQuoteBuilder || showQuotes || showOrders;
   const showProduction = showTaskManager || showInventory || showCatalog;
+
+  const getLinkedFiles = (entityType: FileEntityType, entityId?: string) => {
+    if (!entityId) return [];
+    return erpFiles.filter(
+      (file) => file.entityType === entityType && file.entityId === entityId
+    );
+  };
+
+  const handleUploadFile = async ({
+    file,
+    entityType,
+    entityId,
+    fileCategory,
+    notes,
+    relatedCustomerId,
+    relatedLeadId,
+    relatedQuoteId,
+    relatedOrderId,
+  }: {
+    file?: File | null;
+    entityType: FileEntityType;
+    entityId: string;
+    fileCategory: FileCategory;
+    notes?: string;
+    relatedCustomerId?: string;
+    relatedLeadId?: string;
+    relatedQuoteId?: string;
+    relatedOrderId?: string;
+  }) => {
+    if (!file) return;
+
+    if (!canUploadFiles) {
+      alert('You do not have permission to upload files.');
+      return;
+    }
+
+    setUploadingFileFor(`${entityType}-${entityId}`);
+
+    try {
+      await uploadERPFile({
+        file,
+        entityType,
+        entityId,
+        fileCategory,
+        uploadedBy: currentUser?.id || '',
+        notes,
+        relatedCustomerId,
+        relatedLeadId,
+        relatedQuoteId,
+        relatedOrderId,
+      });
+
+      await loadERPFiles();
+      alert('File uploaded successfully.');
+    } catch (err: any) {
+      console.error('Failed to upload file:', err);
+      alert(err?.message || 'Could not upload file.');
+    } finally {
+      setUploadingFileFor(null);
+    }
+  };
+
+  const FileUploadPanel = ({
+    entityType,
+    entityId,
+    title,
+    relatedCustomerId,
+    relatedLeadId,
+    relatedQuoteId,
+    relatedOrderId,
+  }: {
+    entityType: FileEntityType;
+    entityId: string;
+    title: string;
+    relatedCustomerId?: string;
+    relatedLeadId?: string;
+    relatedQuoteId?: string;
+    relatedOrderId?: string;
+  }) => {
+    const linkedFiles = getLinkedFiles(entityType, entityId);
+    const uploadKey = `${entityType}-${entityId}`;
+
+    if (!canViewDrawings) {
+      return (
+        <div className="rounded-[24px] border border-slate-100 bg-white p-6">
+          <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">
+            {title}
+          </h3>
+          <p className="mt-3 text-sm font-bold text-slate-400">
+            Restricted
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-widest text-slate-400">
+              {title}
+            </h3>
+            <p className="text-xs font-bold text-slate-400">
+              PDF, JPG, PNG, WEBP, HEIC up to 25 MB
+            </p>
+          </div>
+
+          {canUploadFiles && (
+            <label className="cursor-pointer rounded-2xl bg-blue-600 px-4 py-3 text-xs font-black uppercase tracking-widest text-white shadow-sm hover:bg-blue-700">
+              {uploadingFileFor === uploadKey ? 'Uploading...' : 'Upload File'}
+              <input
+                type="file"
+                accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+                className="hidden"
+                disabled={uploadingFileFor === uploadKey}
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0];
+                  e.target.value = '';
+                  handleUploadFile({
+                    file: selectedFile,
+                    entityType,
+                    entityId,
+                    fileCategory: 'Drawing',
+                    relatedCustomerId,
+                    relatedLeadId,
+                    relatedQuoteId,
+                    relatedOrderId,
+                  });
+                }}
+              />
+            </label>
+          )}
+        </div>
+
+        {filesLoading && (
+          <p className="text-sm font-bold text-slate-400">Loading files...</p>
+        )}
+
+        {filesError && (
+          <p className="text-sm font-bold text-red-500">{filesError}</p>
+        )}
+
+        {linkedFiles.length === 0 ? (
+          <p className="text-sm font-bold text-slate-400">
+            No files uploaded yet.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {linkedFiles.map((file) => (
+              <a
+                key={file.id}
+                href={file.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 hover:border-blue-200 hover:bg-blue-50"
+              >
+                <span className="truncate">{file.originalName}</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {file.fileCategory}
+                </span>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const handleReserveStockForOrder = async (order: FirestoreOrder) => {
     if (!canManageInventory) {
@@ -1997,38 +2324,70 @@ const App: React.FC = () => {
   // KPI Calculations with Explanations
   const statsList = useMemo(() => [
     {
-      id: 'revenue',
-      label: 'Total Revenue',
-      val: `$${dashboardStats.revenue.toLocaleString()}`,
-      trend: '↑ 14%',
-      icon: DollarSign,
-      explanation: "Calculation: Sum of 'Total Amount' from all 'Delivered' and 'In Process' orders."
+      id: 'totalQuotes',
+      label: 'Total Quotes',
+      val: canViewQuotePrice ? formatMoney(dashboardStats.totalQuoteValue) : 'Restricted',
+      subtext: `${dashboardStats.quotesForStats.length} quotes`,
+      icon: FileText,
+      explanation: 'Sum of live Firestore quote totals for the selected store.',
     },
     {
-      id: 'profit',
-      label: 'Net Profit',
-      val: `$${(dashboardStats.revenue * 0.28).toLocaleString()}`,
-      trend: '↑ 5%',
+      id: 'acceptedQuotes',
+      label: 'Accepted Quotes',
+      val: canViewQuotePrice ? formatMoney(dashboardStats.acceptedQuoteValue) : 'Restricted',
+      subtext: 'Accepted + Converted',
       icon: TrendingUp,
-      explanation: "Calculation: Total Revenue - (Cost of Goods Sold + Labor Costs)."
+      explanation: 'Sum of Accepted and Converted quote totals from live Firestore quotes.',
     },
     {
-      id: 'orders',
+      id: 'activeOrders',
       label: 'Active Orders',
-      val: dashboardStats.count,
-      trend: '↑ 8%',
+      val: dashboardStats.activeOrderCount,
+      subtext: `${dashboardStats.ordersForStats.length} total orders`,
       icon: ClipboardList,
-      explanation: "Count of all active orders excluding 'Drafts'."
+      explanation: 'Live Firestore orders that are not Completed or Cancelled.',
+    },
+    {
+      id: 'orderRevenue',
+      label: 'Order Revenue',
+      val: canViewQuotePrice ? formatMoney(dashboardStats.totalOrderRevenue) : 'Restricted',
+      subtext: 'From live orders',
+      icon: DollarSign,
+      explanation: 'Sum of totals from live Firestore orders for the selected store.',
+    },
+    {
+      id: 'unpaidOrders',
+      label: 'Unpaid Orders',
+      val: dashboardStats.unpaidOrderCount,
+      subtext: canViewQuotePrice ? formatMoney(dashboardStats.unpaidOrderValue) : 'Restricted',
+      icon: Clock,
+      explanation: 'Count and value of live Firestore orders with payment status Unpaid.',
     },
     {
       id: 'inventory',
       label: 'Inventory Value',
-      val: `$${(dashboardStats.inventoryVal / 1000).toFixed(1)}k`,
-      trend: '↓ 5%',
+      val: canViewQuotePrice ? formatMoney(dashboardStats.inventoryValue) : 'Restricted',
+      subtext: `${dashboardStats.lowStockCount} low-stock items`,
       icon: Warehouse,
-      explanation: "Calculation: Sum of current stock levels multiplied by base manufacturing costs."
-    }
-  ], [dashboardStats]);
+      explanation: 'Sum of catalog base price multiplied by current stock level.',
+    },
+    {
+      id: 'activeTeam',
+      label: 'Active Team',
+      val: dashboardStats.activeTeamCount,
+      subtext: 'HR / Labor active',
+      icon: Users,
+      explanation: 'Active HR / Labor team members for the selected store.',
+    },
+    {
+      id: 'openLeads',
+      label: 'Open Leads',
+      val: dashboardStats.leadsForStats.filter((lead) => !['Won', 'Lost'].includes(lead.status)).length,
+      subtext: `${dashboardStats.leadsForStats.length} total leads`,
+      icon: Activity,
+      explanation: 'Live Firestore leads that are not Won or Lost.',
+    },
+  ], [dashboardStats, canViewQuotePrice]);
 
   // Conditional Authentication Check
   if (authLoading) {
@@ -2160,6 +2519,7 @@ const App: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto p-10">
           {activeView === 'Dashboard' && (
+            showDashboard ? (
             <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-700">
               <div className="flex items-center justify-between">
                 <h3 className="text-2xl font-black tracking-tight">{dashboardTitle}</h3>
@@ -2207,8 +2567,8 @@ const App: React.FC = () => {
 
                     <div className="flex items-baseline gap-2 relative z-10">
                       <p className="text-3xl font-black">{s.val}</p>
-                      <span className={`text-[10px] font-bold ${s.trend.startsWith('↑') ? 'text-emerald-500' : 'text-red-400'}`}>{s.trend}</span>
                     </div>
+                    <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest relative z-10">{s.subtext}</p>
                     <s.icon className="absolute -bottom-4 -right-4 text-slate-50 w-24 h-24" />
                   </div>
                 ))}
@@ -2218,7 +2578,9 @@ const App: React.FC = () => {
                 <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-8">
                    <h4 className="text-sm font-black uppercase tracking-widest">Performance Insights</h4>
                    <div className="space-y-6">
-                      {dashboardStats.ordersPerStore.filter(s => !currentUser?.storeId || s.name === userStoreName).map(s => {
+                      {dashboardStats.ordersPerStore.filter(s => !currentUser?.storeId || s.name === userStoreName).length === 0 ? (
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300 italic">No store order data yet.</p>
+                      ) : dashboardStats.ordersPerStore.filter(s => !currentUser?.storeId || s.name === userStoreName).map(s => {
                         const max = Math.max(...dashboardStats.ordersPerStore.map(v => v.count)) || 1;
                         return (
                           <div key={s.name} className="space-y-2">
@@ -2238,7 +2600,80 @@ const App: React.FC = () => {
                    <Activity size={200} className="absolute -bottom-10 -right-10 text-white/5" />
                 </div>
               </div>
+
+              <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-6">
+                <h4 className="text-sm font-black uppercase tracking-widest">Production Snapshot</h4>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  {['Not Started', 'In Progress', 'Quality Check', 'Ready', 'Completed'].map((status) => (
+                    <div key={status} className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{status}</span>
+                      <strong className="block text-2xl font-black text-slate-900 mt-2">{dashboardStats.productionStatusCounts[status] || 0}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-6">
+                <h4 className="text-sm font-black uppercase tracking-widest">Lead Pipeline</h4>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                  {['New', 'Contacted', 'Measure Scheduled', 'Quoted', 'Won', 'Lost'].map((status) => (
+                    <div key={status} className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{status}</span>
+                      <strong className="block text-2xl font-black text-slate-900 mt-2">{dashboardStats.leadsByStatus[status] || 0}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-6">
+                  <h4 className="text-sm font-black uppercase tracking-widest">Low Stock</h4>
+                  {dashboardStats.lowStockProducts.length === 0 ? (
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300 italic">No low-stock items.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {dashboardStats.lowStockProducts.slice(0, 5).map((product) => (
+                        <div key={product.id} className="flex items-center justify-between gap-4 py-3 border-b border-slate-50 last:border-0">
+                          <div>
+                            <p className="text-sm font-black text-slate-800">{product.name}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{product.sku}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-sm font-black text-amber-600">{product.stockLevel}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Min {product.minStock}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-[40px] p-10 border border-slate-200 shadow-sm space-y-6">
+                  <h4 className="text-sm font-black uppercase tracking-widest">Recent Activity</h4>
+                  {recentActivity.length === 0 ? (
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300 italic">No recent activity yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {recentActivity.map((event) => (
+                        <div key={event.id} className="flex items-start justify-between gap-4 py-3 border-b border-slate-50 last:border-0">
+                          <div>
+                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{event.type}</p>
+                            <p className="text-sm font-black text-slate-800 mt-1">{event.label}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{event.status || '—'}</p>
+                            <p className="text-[10px] font-bold text-slate-400 mt-1">{formatDate(event.date) || '—'}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
+            ) : (
+              <RestrictedView />
+            )
           )}
 
           {activeView === 'CustomersLeads' && (
@@ -2666,6 +3101,25 @@ const App: React.FC = () => {
                       </table>
                     </div>
                   </div>
+
+                  {selectedLeadDetail && (
+                    <FileUploadPanel
+                      entityType="lead"
+                      entityId={selectedLeadDetail.id}
+                      title="Lead Drawings / Files"
+                      relatedCustomerId={selectedCustomerDetail?.id}
+                      relatedLeadId={selectedLeadDetail.id}
+                    />
+                  )}
+
+                  {selectedCustomerDetail && !selectedLeadDetail && (
+                    <FileUploadPanel
+                      entityType="customer"
+                      entityId={selectedCustomerDetail.id}
+                      title="Customer Files"
+                      relatedCustomerId={selectedCustomerDetail.id}
+                    />
+                  )}
                 </>
               )}
             </div>
@@ -3155,6 +3609,15 @@ const App: React.FC = () => {
                       Thank you for choosing 51wood.
                     </p>
                   </div>
+
+                  <FileUploadPanel
+                    entityType="quote"
+                    entityId={selectedQuoteDetail.id}
+                    title="Quote Drawings / Files"
+                    relatedCustomerId={selectedQuoteDetail.customerId}
+                    relatedLeadId={selectedQuoteDetail.leadId}
+                    relatedQuoteId={selectedQuoteDetail.id}
+                  />
                 </>
               )}
             </div>
@@ -4361,6 +4824,16 @@ const App: React.FC = () => {
                     <h4 className="text-sm font-black uppercase tracking-widest text-slate-900">Internal Notes</h4>
                     <p className="text-sm font-medium text-slate-500 mt-3">{selectedOrderDetail.notes || 'No internal notes.'}</p>
                   </div>
+
+                  <FileUploadPanel
+                    entityType="order"
+                    entityId={selectedOrderDetail.id}
+                    title="Order Drawings / Files"
+                    relatedCustomerId={selectedOrderDetail.customerId}
+                    relatedLeadId={selectedOrderDetail.leadId}
+                    relatedQuoteId={selectedOrderDetail.quoteId}
+                    relatedOrderId={selectedOrderDetail.id}
+                  />
                 </>
               )}
             </div>
